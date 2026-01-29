@@ -271,7 +271,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
 ## Implementation Order
 
 ### Phase 1 — Core loop
-1. Config parsing — parse `pm3.toml` into `HashMap<String, ProcessConfig>`
+1. ~~Config parsing — parse `pm3.toml` into `HashMap<String, ProcessConfig>`~~ **DONE**
    - Unit: valid TOML parses correctly, missing `command` errors, unknown fields error, empty file errors
    - Unit: all optional fields default correctly
    - Unit: multiple process sections parse into correct map keys
