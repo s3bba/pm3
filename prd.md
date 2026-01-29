@@ -281,7 +281,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
    - Unit: socket path, PID file path, log dir path all resolve under data dir
    - Unit: log file paths include process name (`<name>-out.log`, `<name>-err.log`)
 
-3. IPC protocol — define `Request`/`Response` enums with serde JSON
+3. ~~IPC protocol — define `Request`/`Response` enums with serde JSON~~ **DONE**
    - Unit: every `Request` variant serializes and deserializes roundtrip
    - Unit: every `Response` variant serializes and deserializes roundtrip
    - Unit: malformed JSON returns a clear error

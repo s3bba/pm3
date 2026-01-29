@@ -1,7 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RestartPolicy {
     OnFailure,
@@ -9,21 +9,21 @@ pub enum RestartPolicy {
     Never,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum EnvFile {
     Single(String),
     Multiple(Vec<String>),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Watch {
     Enabled(bool),
     Path(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProcessConfig {
     pub command: String,
     pub cwd: Option<String>,
@@ -76,26 +76,15 @@ struct RawProcessConfig {
     extra: HashMap<String, toml::Value>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub enum ConfigError {
+    #[error("config file is empty")]
     Empty,
+    #[error("TOML parse error: {0}")]
     TomlParse(String),
+    #[error("unknown field `{field}` in process `{process}`")]
     UnknownField { process: String, field: String },
 }
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConfigError::Empty => write!(f, "config file is empty"),
-            ConfigError::TomlParse(msg) => write!(f, "TOML parse error: {msg}"),
-            ConfigError::UnknownField { process, field } => {
-                write!(f, "unknown field `{field}` in process `{process}`")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {}
 
 pub fn parse_config(content: &str) -> Result<HashMap<String, ProcessConfig>, ConfigError> {
     let table: HashMap<String, toml::Value> =
