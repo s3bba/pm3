@@ -276,7 +276,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
    - Unit: all optional fields default correctly
    - Unit: multiple process sections parse into correct map keys
 
-2. Paths module — resolve data directory, socket path, PID file, log dir
+2. ~~Paths module — resolve data directory, socket path, PID file, log dir~~ **DONE**
    - Unit: Linux returns `~/.local/share/pm3/`, macOS returns `~/Library/Application Support/pm3/`
    - Unit: socket path, PID file path, log dir path all resolve under data dir
    - Unit: log file paths include process name (`<name>-out.log`, `<name>-err.log`)
