@@ -15,35 +15,34 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Start processes defined in pm3.toml
     Start {
         names: Vec<String>,
         #[arg(long)]
         env: Option<String>,
     },
-    Stop {
-        names: Vec<String>,
-    },
-    Restart {
-        names: Vec<String>,
-    },
+    /// Stop running processes
+    Stop { names: Vec<String> },
+    /// Restart running processes
+    Restart { names: Vec<String> },
+    /// List all managed processes
     #[command(visible_alias = "view")]
     List,
+    /// Stop all processes and shut down the daemon
     Kill,
-    Reload {
-        names: Vec<String>,
-    },
-    Info {
-        name: String,
-    },
-    Signal {
-        name: String,
-        signal: String,
-    },
+    /// Reload process configuration
+    Reload { names: Vec<String> },
+    /// Show detailed info about a process
+    Info { name: String },
+    /// Send a signal to a process
+    Signal { name: String, signal: String },
+    /// Save current process list for resurrection
     Save,
+    /// Restore previously saved processes
     Resurrect,
-    Flush {
-        names: Vec<String>,
-    },
+    /// Remove processes from the managed list
+    Flush { names: Vec<String> },
+    /// View process logs
     Log {
         name: Option<String>,
         #[arg(long, default_value_t = 15)]

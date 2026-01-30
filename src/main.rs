@@ -1,7 +1,8 @@
-use clap::Parser;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
+use clap::{CommandFactory, Parser};
+use comfy_table::{Attribute, Cell, Color, Table, presets::UTF8_FULL_CONDENSED};
+use owo_colors::OwoColorize;
 use pm3::cli::{Cli, Command};
-use pm3::protocol::{Request, Response};
+use pm3::protocol::{ProcessStatus, Request, Response};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -19,12 +20,26 @@ async fn main() -> color_eyre::Result<()> {
             print_response_json(&response);
         } else {
             print_response(&response);
+            if should_auto_list(&request) {
+                let list_resp = pm3::client::send_request(&paths, &Request::List)?;
+                print_response(&list_resp);
+            }
         }
     } else {
-        println!("pm3: no command specified. Use --help for usage.");
+        Cli::command().print_help()?;
     }
 
     Ok(())
+}
+
+fn should_auto_list(request: &Request) -> bool {
+    matches!(
+        request,
+        Request::Start { .. }
+            | Request::Stop { .. }
+            | Request::Restart { .. }
+            | Request::Reload { .. }
+    )
 }
 
 fn command_to_request(command: Command) -> color_eyre::Result<Request> {
@@ -74,25 +89,41 @@ fn print_response_json(response: &Response) {
     println!("{json}");
 }
 
+fn status_color(status: &ProcessStatus) -> Color {
+    match status {
+        ProcessStatus::Online => Color::Green,
+        ProcessStatus::Starting => Color::Yellow,
+        ProcessStatus::Unhealthy => Color::Magenta,
+        ProcessStatus::Stopped => Color::Reset,
+        ProcessStatus::Errored => Color::Red,
+    }
+}
+
 fn print_response(response: &Response) {
     match response {
         Response::Success { message } => {
             if let Some(msg) = message {
-                println!("{msg}");
+                println!("{}", msg.green());
             } else {
-                println!("ok");
+                println!("{}", "ok".green());
             }
         }
         Response::Error { message } => {
-            eprintln!("error: {message}");
+            eprintln!("{} {}", "error:".red().bold(), message);
         }
         Response::ProcessList { processes } => {
             if processes.is_empty() {
-                println!("no processes running");
+                println!("{}", "no processes running".yellow());
             } else {
                 let mut table = Table::new();
                 table.load_preset(UTF8_FULL_CONDENSED);
-                table.set_header(["name", "pid", "status", "uptime", "restarts"]);
+                table.set_header(vec![
+                    Cell::new("name").add_attribute(Attribute::Bold),
+                    Cell::new("pid").add_attribute(Attribute::Bold),
+                    Cell::new("status").add_attribute(Attribute::Bold),
+                    Cell::new("uptime").add_attribute(Attribute::Bold),
+                    Cell::new("restarts").add_attribute(Attribute::Bold),
+                ]);
                 for p in processes {
                     let pid = p
                         .pid
@@ -101,24 +132,43 @@ fn print_response(response: &Response) {
                     let uptime = format_uptime(p.uptime);
                     let status = p.status.to_string();
                     let restarts = p.restarts.to_string();
-                    table.add_row([&p.name, &pid, &status, &uptime, &restarts]);
+                    let restarts_cell = if p.restarts > 0 {
+                        Cell::new(&restarts).fg(Color::Yellow)
+                    } else {
+                        Cell::new(&restarts)
+                    };
+                    table.add_row(vec![
+                        Cell::new(&p.name).fg(Color::Cyan),
+                        Cell::new(&pid),
+                        Cell::new(&status).fg(status_color(&p.status)),
+                        Cell::new(&uptime),
+                        restarts_cell,
+                    ]);
                 }
                 println!("{table}");
             }
         }
         Response::ProcessDetail { info } => {
-            println!("{}: {:?}", info.name, info.status);
-            println!("  command: {}", info.command);
+            let status_str = info.status.to_string();
+            let colored_status = match info.status {
+                ProcessStatus::Online => status_str.green().to_string(),
+                ProcessStatus::Starting => status_str.yellow().to_string(),
+                ProcessStatus::Unhealthy => status_str.magenta().to_string(),
+                ProcessStatus::Stopped => status_str.to_string(),
+                ProcessStatus::Errored => status_str.red().to_string(),
+            };
+            println!("{}: {}", info.name.cyan().bold(), colored_status);
+            println!("  {} {}", "command:".dimmed(), info.command);
             if let Some(pid) = info.pid {
-                println!("  pid: {pid}");
+                println!("  {} {pid}", "pid:".dimmed());
             }
             if let Some(cwd) = &info.cwd {
-                println!("  cwd: {cwd}");
+                println!("  {} {cwd}", "cwd:".dimmed());
             }
         }
         Response::LogLine { name, line } => {
             if let Some(name) = name {
-                println!("[{name}] {line}");
+                println!("{} {line}", format!("[{name}]").cyan().bold());
             } else {
                 println!("{line}");
             }

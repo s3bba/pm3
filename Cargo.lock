@@ -568,6 +568,7 @@ dependencies = [
  "comfy-table",
  "dirs",
  "nix",
+ "owo-colors",
  "predicates",
  "serde",
  "serde_json",
