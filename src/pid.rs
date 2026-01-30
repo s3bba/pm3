@@ -36,7 +36,7 @@ pub fn is_daemon_running(paths: &Paths) -> io::Result<bool> {
             // Process exists but we lack permission to signal it
             Ok(true)
         }
-        Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
+        Err(e) => Err(io::Error::other(e)),
     }
 }
 

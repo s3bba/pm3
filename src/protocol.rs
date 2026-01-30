@@ -75,7 +75,7 @@ pub enum Response {
         processes: Vec<ProcessInfo>,
     },
     ProcessDetail {
-        info: ProcessDetail,
+        info: Box<ProcessDetail>,
     },
     LogLine {
         #[serde(default, skip_serializing_if = "Option::is_none")]
