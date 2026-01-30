@@ -330,7 +330,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - E2E: `pm3 stop` stops all processes
     - E2E: `pm3 stop nonexistent` prints an error
 
-12. Restart command — stop + start
+12. ~~Restart command — stop + start~~ ✅
     - E2E: `pm3 restart web` — process gets a new PID
     - E2E: `pm3 restart` — all processes get new PIDs
     - Integration: restart preserves the process config

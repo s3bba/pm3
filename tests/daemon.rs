@@ -851,6 +851,76 @@ async fn test_stop_custom_kill_signal_sigint() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_restart_preserves_process_config() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sleep 999");
+    config.group = Some("workers".to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("worker".to_string(), config);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    // Get PID before restart
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    let old_pid = match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1);
+            assert_eq!(processes[0].status, ProcessStatus::Online);
+            processes[0].pid.unwrap()
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    };
+
+    // Restart
+    let restart_resp = send_raw_request(
+        &paths,
+        &Request::Restart {
+            names: Some(vec!["worker".to_string()]),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&restart_resp, Response::Success { .. }),
+        "expected Success, got: {restart_resp:?}"
+    );
+
+    // Verify: online, new PID, restarts == 1, group preserved
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1);
+            let info = &processes[0];
+            assert_eq!(info.name, "worker");
+            assert_eq!(info.status, ProcessStatus::Online);
+            assert!(info.pid.is_some());
+            assert_ne!(info.pid.unwrap(), old_pid, "PID should change after restart");
+            assert_eq!(info.restarts, 1);
+            assert_eq!(info.group, Some("workers".to_string()));
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_start_nonexistent_name_returns_error() {
     let dir = TempDir::new().unwrap();
     let paths = Paths::with_base(dir.path().to_path_buf());

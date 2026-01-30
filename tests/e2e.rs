@@ -149,3 +149,143 @@ command = "sleep 999"
 
     kill_daemon(&data_dir, work_dir);
 }
+
+#[test]
+fn test_e2e_restart_one_process_gets_new_pid() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+
+[worker]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    // Start all processes
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    // Record PIDs
+    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let web_pid_before = extract_pid(&stdout, "web");
+    let worker_pid_before = extract_pid(&stdout, "worker");
+
+    // Restart only web
+    pm3(&data_dir, work_dir)
+        .args(["restart", "web"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("restarted: web"));
+
+    // Verify: web has new PID, worker unchanged, both online
+    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let web_pid_after = extract_pid(&stdout, "web");
+    let worker_pid_after = extract_pid(&stdout, "worker");
+
+    assert_ne!(
+        web_pid_before, web_pid_after,
+        "web PID should change after restart"
+    );
+    assert_eq!(
+        worker_pid_before, worker_pid_after,
+        "worker PID should not change"
+    );
+
+    let web_line = stdout.lines().find(|l| l.contains("web")).unwrap();
+    assert!(
+        web_line.contains("online"),
+        "web should be online, got: {web_line}"
+    );
+    let worker_line = stdout.lines().find(|l| l.contains("worker")).unwrap();
+    assert!(
+        worker_line.contains("online"),
+        "worker should be online, got: {worker_line}"
+    );
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
+fn test_e2e_restart_all_processes_get_new_pids() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+
+[worker]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    // Start all processes
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    // Record PIDs
+    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let web_pid_before = extract_pid(&stdout, "web");
+    let worker_pid_before = extract_pid(&stdout, "worker");
+
+    // Restart all (no args)
+    pm3(&data_dir, work_dir)
+        .arg("restart")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("restarted:"));
+
+    // Verify: both have new PIDs, both online
+    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let web_pid_after = extract_pid(&stdout, "web");
+    let worker_pid_after = extract_pid(&stdout, "worker");
+
+    assert_ne!(
+        web_pid_before, web_pid_after,
+        "web PID should change after restart"
+    );
+    assert_ne!(
+        worker_pid_before, worker_pid_after,
+        "worker PID should change after restart"
+    );
+
+    let web_line = stdout.lines().find(|l| l.contains("web")).unwrap();
+    assert!(
+        web_line.contains("online"),
+        "web should be online, got: {web_line}"
+    );
+    let worker_line = stdout.lines().find(|l| l.contains("worker")).unwrap();
+    assert!(
+        worker_line.contains("online"),
+        "worker should be online, got: {worker_line}"
+    );
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+/// Extract a PID from `pm3 list` output for a given process name.
+/// Expects table rows like: "web    12345  online  ..."
+fn extract_pid(list_output: &str, name: &str) -> String {
+    let line = list_output
+        .lines()
+        .find(|l| l.contains(name))
+        .unwrap_or_else(|| panic!("process '{name}' not found in list output"));
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    // PID is the second column
+    fields[1].to_string()
+}

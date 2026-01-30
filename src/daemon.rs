@@ -142,6 +142,7 @@ async fn dispatch(
             Response::ProcessList { processes: infos }
         }
         Request::Stop { names } => handle_stop(names, processes).await,
+        Request::Restart { names } => handle_restart(names, processes, paths).await,
         Request::Kill => {
             let _ = shutdown_tx.send(true);
             Response::Success {
@@ -240,5 +241,59 @@ async fn handle_stop(
 
     Response::Success {
         message: Some(format!("stopped: {}", stopped.join(", "))),
+    }
+}
+
+async fn handle_restart(
+    names: Option<Vec<String>>,
+    processes: &Arc<RwLock<ProcessTable>>,
+    paths: &Paths,
+) -> Response {
+    let mut table = processes.write().await;
+
+    let targets: Vec<String> = match names {
+        Some(ref requested) => {
+            for name in requested {
+                if !table.contains_key(name) {
+                    return Response::Error {
+                        message: format!("process not found: {name}"),
+                    };
+                }
+            }
+            requested.clone()
+        }
+        None => table.keys().cloned().collect(),
+    };
+
+    let mut restarted = Vec::new();
+    for name in &targets {
+        let managed = table.get_mut(name).unwrap();
+        let config = managed.config.clone();
+        let old_restarts = managed.restarts;
+
+        if managed.status != protocol::ProcessStatus::Stopped
+            && let Err(e) = managed.graceful_stop().await
+        {
+            return Response::Error {
+                message: format!("failed to stop '{}': {}", name, e),
+            };
+        }
+
+        match process::spawn_process(name.clone(), config, paths) {
+            Ok(mut new_managed) => {
+                new_managed.restarts = old_restarts + 1;
+                table.insert(name.clone(), new_managed);
+                restarted.push(name.clone());
+            }
+            Err(e) => {
+                return Response::Error {
+                    message: format!("failed to restart '{}': {}", name, e),
+                };
+            }
+        }
+    }
+
+    Response::Success {
+        message: Some(format!("restarted: {}", restarted.join(", "))),
     }
 }
