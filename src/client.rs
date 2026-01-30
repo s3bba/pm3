@@ -24,7 +24,7 @@ pub fn send_request(paths: &Paths, request: &Request) -> color_eyre::Result<Resp
 }
 
 fn ensure_daemon_running(paths: &Paths) -> color_eyre::Result<()> {
-    if pid::is_daemon_running(paths)? {
+    if pid::is_daemon_running_sync(paths)? {
         return Ok(());
     }
 

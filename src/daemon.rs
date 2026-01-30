@@ -5,26 +5,26 @@ use crate::process::{self, ProcessTable};
 use crate::protocol::{self, Request, Response};
 use color_eyre::eyre::bail;
 use std::collections::HashMap;
-use std::fs;
 use std::sync::Arc;
+use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::RwLock;
 use tokio::sync::watch;
 
 pub async fn run(paths: Paths) -> color_eyre::Result<()> {
-    fs::create_dir_all(paths.data_dir())?;
+    fs::create_dir_all(paths.data_dir()).await?;
 
-    if pid::is_daemon_running(&paths)? {
+    if pid::is_daemon_running(&paths).await? {
         bail!("daemon is already running");
     }
 
-    pid::write_pid_file(&paths)?;
+    pid::write_pid_file(&paths).await?;
 
     // Remove stale socket file if it exists
     let socket_path = paths.socket_file();
     if socket_path.exists() {
-        fs::remove_file(&socket_path)?;
+        fs::remove_file(&socket_path).await?;
     }
 
     let listener = UnixListener::bind(&socket_path)?;
@@ -50,8 +50,8 @@ pub async fn run(paths: Paths) -> color_eyre::Result<()> {
     }
 
     // Cleanup
-    let _ = fs::remove_file(paths.socket_file());
-    pid::remove_pid_file(&paths);
+    let _ = fs::remove_file(paths.socket_file()).await;
+    pid::remove_pid_file(&paths).await;
 
     result
 }
@@ -187,7 +187,7 @@ async fn handle_start(
             continue;
         }
 
-        match process::spawn_process(name.clone(), config, paths) {
+        match process::spawn_process(name.clone(), config, paths).await {
             Ok(managed) => {
                 table.insert(name.clone(), managed);
                 started.push(name);
@@ -285,7 +285,7 @@ async fn handle_restart(
             };
         }
 
-        match process::spawn_process(name.clone(), config, paths) {
+        match process::spawn_process(name.clone(), config, paths).await {
             Ok(mut new_managed) => {
                 new_managed.restarts = old_restarts + 1;
                 table.insert(name.clone(), new_managed);
