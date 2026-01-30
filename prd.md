@@ -319,7 +319,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
    - E2E: no processes running → `pm3 list` shows empty table or message
    - Integration: verify `ProcessInfo` struct has correct fields (name, PID, status, uptime, restarts)
 
-10. Graceful stop — SIGTERM → wait `kill_timeout` → SIGKILL, custom `kill_signal`
+10. ~~Graceful stop — SIGTERM → wait `kill_timeout` → SIGKILL, custom `kill_signal`~~ ✅
     - Integration: stop a process that handles SIGTERM, verify it exits cleanly
     - Integration: stop a process that ignores SIGTERM, verify SIGKILL after timeout
     - Integration: custom `kill_signal = "SIGINT"`, verify SIGINT is sent first

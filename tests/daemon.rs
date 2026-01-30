@@ -35,6 +35,13 @@ fn test_config(command: &str) -> ProcessConfig {
     }
 }
 
+fn test_config_with_kill(command: &str, kill_timeout: Option<u64>, kill_signal: Option<&str>) -> ProcessConfig {
+    let mut config = test_config(command);
+    config.kill_timeout = kill_timeout;
+    config.kill_signal = kill_signal.map(|s| s.to_string());
+    config
+}
+
 async fn start_test_daemon(paths: &Paths) -> tokio::task::JoinHandle<color_eyre::Result<()>> {
     let p = paths.clone();
     let handle = tokio::spawn(async move { daemon::run(p).await });
@@ -182,10 +189,7 @@ async fn test_spawn_process_tracks_pid() {
             let info = &processes[0];
             assert_eq!(info.name, "sleeper");
             assert!(info.pid.is_some(), "PID should be present");
-            assert_eq!(
-                info.status,
-                pm3::protocol::ProcessStatus::Online
-            );
+            assert_eq!(info.status, pm3::protocol::ProcessStatus::Online);
 
             // Verify PID is alive
             let pid = nix::unistd::Pid::from_raw(info.pid.unwrap() as i32);
@@ -639,6 +643,208 @@ async fn test_list_multiple_processes_all_fields() {
         }
         other => panic!("expected ProcessList, got: {other:?}"),
     }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_stop_process_handles_sigterm() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut configs = HashMap::new();
+    configs.insert("sleeper".to_string(), test_config("sleep 999"));
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    // Get PID from list
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    let pid = match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1);
+            let info = &processes[0];
+            assert_eq!(info.status, ProcessStatus::Online);
+            info.pid.unwrap()
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    };
+
+    // Stop the process
+    let stop_resp = send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["sleeper".to_string()]),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&stop_resp, Response::Success { .. }),
+        "expected Success, got: {stop_resp:?}"
+    );
+
+    // Verify process is dead
+    let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+    assert!(
+        nix::sys::signal::kill(nix_pid, None).is_err(),
+        "process should be dead after stop"
+    );
+
+    // Verify status is Stopped
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1);
+            assert_eq!(processes[0].status, ProcessStatus::Stopped);
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_stop_process_ignores_sigterm_gets_sigkill() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    // Process that traps SIGTERM and ignores it.
+    // Use bash explicitly for reliable signal handling.
+    let mut configs = HashMap::new();
+    configs.insert(
+        "stubborn".to_string(),
+        test_config_with_kill(
+            "bash -c 'trap \"\" TERM; while true; do sleep 60; done'",
+            Some(500),
+            None,
+        ),
+    );
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    // Wait for the process to start and install the trap
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Get PID
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    let pid = match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1);
+            assert_eq!(processes[0].status, ProcessStatus::Online);
+            processes[0].pid.unwrap()
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    };
+
+    let start = std::time::Instant::now();
+
+    // Stop — should timeout on SIGTERM and escalate to SIGKILL
+    let stop_resp = send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["stubborn".to_string()]),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&stop_resp, Response::Success { .. }),
+        "expected Success, got: {stop_resp:?}"
+    );
+
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(400),
+        "should have waited for timeout, elapsed: {elapsed:?}"
+    );
+
+    // Verify process is dead
+    let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+    assert!(
+        nix::sys::signal::kill(nix_pid, None).is_err(),
+        "process should be dead after SIGKILL"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_stop_custom_kill_signal_sigint() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    // Create a workdir for the marker file
+    let workdir = dir.path().join("workdir");
+    std::fs::create_dir_all(&workdir).unwrap();
+    let marker = workdir.join("got_sigint");
+
+    let handle = start_test_daemon(&paths).await;
+
+    // Process that traps SIGINT to write a marker and exit, but ignores SIGTERM.
+    // Use a short sleep interval so bash can check for pending signals between iterations.
+    let marker_path = marker.display();
+    let command = format!(
+        r#"bash -c "trap '' TERM; trap 'echo yes > {marker_path}; exit 0' INT; while true; do sleep 0.1; done""#
+    );
+    let mut config = test_config_with_kill(
+        &command,
+        Some(2000),
+        Some("SIGINT"),
+    );
+    config.cwd = Some(workdir.to_str().unwrap().to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("sigint-handler".to_string(), config);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    // Wait for process to start and install signal traps
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Stop with SIGINT
+    let stop_resp = send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["sigint-handler".to_string()]),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&stop_resp, Response::Success { .. }),
+        "expected Success, got: {stop_resp:?}"
+    );
+
+    // Verify marker file exists — proves SIGINT was received
+    assert!(
+        marker.exists(),
+        "marker file should exist, proving SIGINT was received"
+    );
 
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;

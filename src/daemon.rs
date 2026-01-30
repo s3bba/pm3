@@ -7,9 +7,9 @@ use color_eyre::eyre::bail;
 use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+use tokio::sync::RwLock;
 use tokio::sync::watch;
 
 pub async fn run(paths: Paths) -> color_eyre::Result<()> {
@@ -32,14 +32,20 @@ pub async fn run(paths: Paths) -> color_eyre::Result<()> {
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let processes: Arc<RwLock<ProcessTable>> = Arc::new(RwLock::new(HashMap::new()));
 
-    let result =
-        run_accept_loop(&paths, &listener, &shutdown_tx, &mut shutdown_rx, &processes).await;
+    let result = run_accept_loop(
+        &paths,
+        &listener,
+        &shutdown_tx,
+        &mut shutdown_rx,
+        &processes,
+    )
+    .await;
 
-    // Kill all managed processes before cleanup
+    // Gracefully stop all managed processes before cleanup
     {
         let mut table = processes.write().await;
         for (_, managed) in table.iter_mut() {
-            let _ = managed.child.start_kill();
+            let _ = managed.graceful_stop().await;
         }
     }
 
@@ -127,14 +133,15 @@ async fn dispatch(
     paths: &Paths,
 ) -> Response {
     match request {
-        Request::Start {
-            configs, names, ..
-        } => handle_start(configs, names, processes, paths).await,
+        Request::Start { configs, names, .. } => {
+            handle_start(configs, names, processes, paths).await
+        }
         Request::List => {
             let table = processes.read().await;
             let infos: Vec<_> = table.values().map(|m| m.to_process_info()).collect();
             Response::ProcessList { processes: infos }
         }
+        Request::Stop { names } => handle_stop(names, processes).await,
         Request::Kill => {
             let _ = shutdown_tx.send(true);
             Response::Success {
@@ -194,5 +201,44 @@ async fn handle_start(
 
     Response::Success {
         message: Some(format!("started: {}", started.join(", "))),
+    }
+}
+
+async fn handle_stop(
+    names: Option<Vec<String>>,
+    processes: &Arc<RwLock<ProcessTable>>,
+) -> Response {
+    let mut table = processes.write().await;
+
+    let targets: Vec<String> = match names {
+        Some(ref requested) => {
+            for name in requested {
+                if !table.contains_key(name) {
+                    return Response::Error {
+                        message: format!("process not found: {name}"),
+                    };
+                }
+            }
+            requested.clone()
+        }
+        None => table.keys().cloned().collect(),
+    };
+
+    let mut stopped = Vec::new();
+    for name in &targets {
+        let managed = table.get_mut(name).unwrap();
+        if managed.status == protocol::ProcessStatus::Stopped {
+            continue;
+        }
+        if let Err(e) = managed.graceful_stop().await {
+            return Response::Error {
+                message: format!("failed to stop '{}': {}", name, e),
+            };
+        }
+        stopped.push(name.clone());
+    }
+
+    Response::Success {
+        message: Some(format!("stopped: {}", stopped.join(", "))),
     }
 }

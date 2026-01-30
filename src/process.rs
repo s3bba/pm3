@@ -3,7 +3,15 @@ use crate::paths::Paths;
 use crate::protocol::{ProcessInfo, ProcessStatus};
 use std::collections::HashMap;
 use std::fs;
+use std::str::FromStr;
 use tokio::process::{Child, Command};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+pub const DEFAULT_KILL_TIMEOUT_MS: u64 = 5000;
+pub const DEFAULT_KILL_SIGNAL: &str = "SIGTERM";
 
 // ---------------------------------------------------------------------------
 // Error
@@ -17,6 +25,8 @@ pub enum ProcessError {
     SpawnFailed(#[from] std::io::Error),
     #[error("process not found: {0}")]
     NotFound(String),
+    #[error("invalid signal: {0}")]
+    InvalidSignal(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -28,14 +38,26 @@ pub fn parse_command(command: &str) -> Result<(String, Vec<String>), ProcessErro
         .map_err(|e| ProcessError::InvalidCommand(format!("failed to parse: {e}")))?;
 
     if words.is_empty() {
-        return Err(ProcessError::InvalidCommand(
-            "command is empty".to_string(),
-        ));
+        return Err(ProcessError::InvalidCommand("command is empty".to_string()));
     }
 
     let program = words[0].clone();
     let args = words[1..].to_vec();
     Ok((program, args))
+}
+
+// ---------------------------------------------------------------------------
+// Signal parsing
+// ---------------------------------------------------------------------------
+
+pub fn parse_signal(name: &str) -> Result<nix::sys::signal::Signal, ProcessError> {
+    let normalized = if name.starts_with("SIG") {
+        name.to_string()
+    } else {
+        format!("SIG{name}")
+    };
+    nix::sys::signal::Signal::from_str(&normalized)
+        .map_err(|_| ProcessError::InvalidSignal(name.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -63,6 +85,45 @@ impl ManagedProcess {
             memory_bytes: None,
             group: self.config.group.clone(),
         }
+    }
+
+    pub async fn graceful_stop(&mut self) -> Result<(), ProcessError> {
+        let raw_pid = match self.child.id() {
+            Some(pid) => pid,
+            None => {
+                // Process already exited
+                self.status = ProcessStatus::Stopped;
+                return Ok(());
+            }
+        };
+
+        let signal_name = self
+            .config
+            .kill_signal
+            .as_deref()
+            .unwrap_or(DEFAULT_KILL_SIGNAL);
+        let signal = parse_signal(signal_name)?;
+
+        let timeout_ms = self.config.kill_timeout.unwrap_or(DEFAULT_KILL_TIMEOUT_MS);
+        let duration = std::time::Duration::from_millis(timeout_ms);
+
+        let pid = nix::unistd::Pid::from_raw(raw_pid as i32);
+        let _ = nix::sys::signal::kill(pid, signal);
+
+        match tokio::time::timeout(duration, self.child.wait()).await {
+            Ok(_) => {
+                // Process exited within timeout
+                self.status = ProcessStatus::Stopped;
+            }
+            Err(_) => {
+                // Timeout expired — escalate to SIGKILL
+                let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+                let _ = self.child.wait().await;
+                self.status = ProcessStatus::Stopped;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -158,13 +219,101 @@ mod tests {
     fn test_parse_empty_command() {
         let result = parse_command("");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ProcessError::InvalidCommand(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ProcessError::InvalidCommand(_)
+        ));
     }
 
     #[test]
     fn test_parse_whitespace_only() {
         let result = parse_command("   ");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ProcessError::InvalidCommand(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ProcessError::InvalidCommand(_)
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Graceful stop constants & parse_signal
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_default_kill_timeout() {
+        assert_eq!(DEFAULT_KILL_TIMEOUT_MS, 5000);
+    }
+
+    #[test]
+    fn test_default_kill_signal() {
+        assert_eq!(DEFAULT_KILL_SIGNAL, "SIGTERM");
+    }
+
+    #[test]
+    fn test_parse_signal_sigterm() {
+        let sig = parse_signal("SIGTERM").unwrap();
+        assert_eq!(sig, nix::sys::signal::Signal::SIGTERM);
+    }
+
+    #[test]
+    fn test_parse_signal_sigint() {
+        let sig = parse_signal("SIGINT").unwrap();
+        assert_eq!(sig, nix::sys::signal::Signal::SIGINT);
+    }
+
+    #[test]
+    fn test_parse_signal_sighup() {
+        let sig = parse_signal("SIGHUP").unwrap();
+        assert_eq!(sig, nix::sys::signal::Signal::SIGHUP);
+    }
+
+    #[test]
+    fn test_parse_signal_sigusr1() {
+        let sig = parse_signal("SIGUSR1").unwrap();
+        assert_eq!(sig, nix::sys::signal::Signal::SIGUSR1);
+    }
+
+    #[test]
+    fn test_parse_signal_sigusr2() {
+        let sig = parse_signal("SIGUSR2").unwrap();
+        assert_eq!(sig, nix::sys::signal::Signal::SIGUSR2);
+    }
+
+    #[test]
+    fn test_parse_signal_without_sig_prefix() {
+        let sig = parse_signal("TERM").unwrap();
+        assert_eq!(sig, nix::sys::signal::Signal::SIGTERM);
+    }
+
+    #[test]
+    fn test_parse_signal_invalid() {
+        let result = parse_signal("BOGUS");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ProcessError::InvalidSignal(_)
+        ));
+    }
+
+    #[test]
+    fn test_parse_signal_empty() {
+        let result = parse_signal("");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ProcessError::InvalidSignal(_)
+        ));
+    }
+
+    #[test]
+    fn test_config_kill_timeout_default_when_none() {
+        let val: Option<u64> = None;
+        assert_eq!(val.unwrap_or(DEFAULT_KILL_TIMEOUT_MS), 5000);
+    }
+
+    #[test]
+    fn test_config_kill_signal_default_when_none() {
+        let val: Option<&str> = None;
+        assert_eq!(val.unwrap_or(DEFAULT_KILL_SIGNAL), "SIGTERM");
     }
 }
