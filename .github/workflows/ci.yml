@@ -1,4 +1,4 @@
-name: Build Ersha OS
+name: Build PM3
 
 on:
   push:

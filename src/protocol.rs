@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn test_response_process_detail_roundtrip() {
         let resp = Response::ProcessDetail {
-            info: ProcessDetail {
+            info: Box::new(ProcessDetail {
                 name: "web".to_string(),
                 pid: Some(1234),
                 status: ProcessStatus::Online,
@@ -416,7 +416,7 @@ mod tests {
                 stderr_log: Some("/home/user/.local/share/pm3/logs/web-err.log".to_string()),
                 health_check: Some("http://localhost:3000/health".to_string()),
                 depends_on: Some(vec!["db".to_string()]),
-            },
+            }),
         };
         assert_eq!(roundtrip_response(&resp), resp);
     }
