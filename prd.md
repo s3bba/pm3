@@ -61,6 +61,7 @@ Both talk to the same background daemon.
 - Daemon auto-starts when any CLI command is run (if not already running)
 - PID file to track daemon process
 - Daemon shuts down gracefully on SIGTERM/SIGINT (stops all children, saves state, cleans up socket + PID file)
+- All daemon-side filesystem operations use `tokio::fs` (non-blocking); client-side code uses `std::fs` (blocking is acceptable pre-socket)
 
 ## Commands
 
@@ -296,11 +297,13 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
    - Integration: client connects, sends a request, gets a response
    - Integration: daemon handles multiple sequential connections
    - Integration: daemon won't start if another instance is already running (PID file check)
+   - Refinement: daemon uses `tokio::fs` for all filesystem ops (create_dir_all, remove_file); PID module exposes async functions for daemon and `is_daemon_running_sync` for the client
 
 6. ~~Process spawning — spawn child process with `command` and `cwd`, track PID~~ **DONE**
    - Integration: spawn `sleep 999`, verify PID is tracked and process is running
    - Integration: spawn with `cwd`, verify child's working directory
    - Unit: command string splits into program + args correctly
+   - Refinement: `spawn_process` is async; uses `tokio::fs::create_dir_all` and `tokio::fs::File::create(...).into_std().await` for log file creation
 
 7. ~~Log capture — pipe child stdout/stderr to log files~~ ✅
    - Integration: spawn `echo hello`, verify `<name>-out.log` contains "hello"

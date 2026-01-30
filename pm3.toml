@@ -1,0 +1,8 @@
+[api]
+command = "python3 -m http.server 8080"
+
+[worker]
+command = "bash -c 'while true; do echo working...; sleep 5; done'"
+
+[docs]
+command = "python3 -m http.server 3000"
