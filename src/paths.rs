@@ -8,6 +8,11 @@ pub struct Paths {
 
 impl Paths {
     pub fn new() -> color_eyre::Result<Self> {
+        if let Ok(path) = std::env::var("PM3_DATA_DIR") {
+            return Ok(Self {
+                data_dir: PathBuf::from(path),
+            });
+        }
         let Some(base) = dirs::data_dir() else {
             bail!("could not determine data directory");
         };

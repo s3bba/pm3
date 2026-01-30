@@ -325,7 +325,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Integration: custom `kill_signal = "SIGINT"`, verify SIGINT is sent first
     - Unit: default `kill_timeout` is 5000ms
 
-11. Stop command — stop processes by name or all
+11. ~~Stop command — stop processes by name or all~~ ✅
     - E2E: `pm3 stop web` stops one process, others keep running
     - E2E: `pm3 stop` stops all processes
     - E2E: `pm3 stop nonexistent` prints an error
