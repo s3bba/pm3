@@ -6,6 +6,9 @@ pub struct Cli {
     #[arg(long, hide = true)]
     pub daemon: bool,
 
+    #[arg(long, global = true)]
+    pub json: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }

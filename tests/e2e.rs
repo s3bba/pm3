@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
+use pm3::protocol::{ProcessInfo, ProcessStatus, Response};
 use predicates::prelude::*;
 use std::path::Path;
 use std::time::Duration;
@@ -16,6 +17,31 @@ fn pm3(data_dir: &Path, work_dir: &Path) -> Command {
 fn kill_daemon(data_dir: &Path, work_dir: &Path) {
     let _ = pm3(data_dir, work_dir).arg("kill").output();
     std::thread::sleep(Duration::from_millis(300));
+}
+
+fn parse_json_response(output: &std::process::Output) -> Response {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(stdout.trim()).expect("failed to parse JSON response")
+}
+
+fn get_process_list(data_dir: &Path, work_dir: &Path) -> Vec<ProcessInfo> {
+    let output = pm3(data_dir, work_dir)
+        .args(["--json", "list"])
+        .output()
+        .unwrap();
+    match parse_json_response(&output) {
+        Response::ProcessList { processes } => processes,
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+}
+
+fn find_process_pid(processes: &[ProcessInfo], name: &str) -> u32 {
+    processes
+        .iter()
+        .find(|p| p.name == name)
+        .unwrap_or_else(|| panic!("process '{name}' not found"))
+        .pid
+        .unwrap_or_else(|| panic!("process '{name}' has no pid"))
 }
 
 #[test]
@@ -47,25 +73,22 @@ command = "sleep 999"
         .stdout(predicate::str::contains("stopped: web"));
 
     // Verify via list: web is stopped, worker is still online
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let processes = get_process_list(&data_dir, work_dir);
 
-    let web_line = stdout
-        .lines()
-        .find(|l| l.contains("web"))
-        .expect("web should appear in list output");
-    assert!(
-        web_line.contains("stopped"),
-        "web should be stopped, got: {web_line}"
-    );
+    let web = processes
+        .iter()
+        .find(|p| p.name == "web")
+        .expect("web should appear in list");
+    assert_eq!(web.status, ProcessStatus::Stopped, "web should be stopped");
 
-    let worker_line = stdout
-        .lines()
-        .find(|l| l.contains("worker"))
-        .expect("worker should appear in list output");
-    assert!(
-        worker_line.contains("online"),
-        "worker should be online, got: {worker_line}"
+    let worker = processes
+        .iter()
+        .find(|p| p.name == "worker")
+        .expect("worker should appear in list");
+    assert_eq!(
+        worker.status,
+        ProcessStatus::Online,
+        "worker should be online"
     );
 
     kill_daemon(&data_dir, work_dir);
@@ -100,23 +123,14 @@ command = "sleep 999"
         .stdout(predicate::str::contains("stopped:"));
 
     // Verify via list: all processes are stopped
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Every process line (skip header) should show "stopped"
-    let process_lines: Vec<&str> = stdout
-        .lines()
-        .skip(1) // skip header row
-        .filter(|l| !l.trim().is_empty())
-        .collect();
-    assert!(
-        !process_lines.is_empty(),
-        "should have process lines in output"
-    );
-    for line in &process_lines {
-        assert!(
-            line.contains("stopped"),
-            "all processes should be stopped, got: {line}"
+    let processes = get_process_list(&data_dir, work_dir);
+    assert!(!processes.is_empty(), "should have processes in list");
+    for p in &processes {
+        assert_eq!(
+            p.status,
+            ProcessStatus::Stopped,
+            "process '{}' should be stopped",
+            p.name
         );
     }
 
@@ -141,11 +155,21 @@ command = "sleep 999"
     // Start a process so the daemon has a process table
     pm3(&data_dir, work_dir).arg("start").assert().success();
 
-    // Try to stop a nonexistent process
-    pm3(&data_dir, work_dir)
-        .args(["stop", "nonexistent"])
-        .assert()
-        .stderr(predicate::str::contains("not found"));
+    // Try to stop a nonexistent process (use --json to get structured error)
+    let output = pm3(&data_dir, work_dir)
+        .args(["--json", "stop", "nonexistent"])
+        .output()
+        .unwrap();
+    let response = parse_json_response(&output);
+    match response {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not found"),
+                "error should contain 'not found', got: {message}"
+            );
+        }
+        other => panic!("expected Error response, got: {other:?}"),
+    }
 
     kill_daemon(&data_dir, work_dir);
 }
@@ -172,10 +196,9 @@ command = "sleep 999"
     pm3(&data_dir, work_dir).arg("start").assert().success();
 
     // Record PIDs
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let web_pid_before = extract_pid(&stdout, "web");
-    let worker_pid_before = extract_pid(&stdout, "worker");
+    let processes = get_process_list(&data_dir, work_dir);
+    let web_pid_before = find_process_pid(&processes, "web");
+    let worker_pid_before = find_process_pid(&processes, "worker");
 
     // Restart only web
     pm3(&data_dir, work_dir)
@@ -185,11 +208,9 @@ command = "sleep 999"
         .stdout(predicate::str::contains("restarted: web"));
 
     // Verify: web has new PID, worker unchanged, both online
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let web_pid_after = extract_pid(&stdout, "web");
-    let worker_pid_after = extract_pid(&stdout, "worker");
+    let processes = get_process_list(&data_dir, work_dir);
+    let web_pid_after = find_process_pid(&processes, "web");
+    let worker_pid_after = find_process_pid(&processes, "worker");
 
     assert_ne!(
         web_pid_before, web_pid_after,
@@ -200,15 +221,13 @@ command = "sleep 999"
         "worker PID should not change"
     );
 
-    let web_line = stdout.lines().find(|l| l.contains("web")).unwrap();
-    assert!(
-        web_line.contains("online"),
-        "web should be online, got: {web_line}"
-    );
-    let worker_line = stdout.lines().find(|l| l.contains("worker")).unwrap();
-    assert!(
-        worker_line.contains("online"),
-        "worker should be online, got: {worker_line}"
+    let web = processes.iter().find(|p| p.name == "web").unwrap();
+    assert_eq!(web.status, ProcessStatus::Online, "web should be online");
+    let worker = processes.iter().find(|p| p.name == "worker").unwrap();
+    assert_eq!(
+        worker.status,
+        ProcessStatus::Online,
+        "worker should be online"
     );
 
     kill_daemon(&data_dir, work_dir);
@@ -236,10 +255,9 @@ command = "sleep 999"
     pm3(&data_dir, work_dir).arg("start").assert().success();
 
     // Record PIDs
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let web_pid_before = extract_pid(&stdout, "web");
-    let worker_pid_before = extract_pid(&stdout, "worker");
+    let processes = get_process_list(&data_dir, work_dir);
+    let web_pid_before = find_process_pid(&processes, "web");
+    let worker_pid_before = find_process_pid(&processes, "worker");
 
     // Restart all (no args)
     pm3(&data_dir, work_dir)
@@ -249,11 +267,9 @@ command = "sleep 999"
         .stdout(predicate::str::contains("restarted:"));
 
     // Verify: both have new PIDs, both online
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let web_pid_after = extract_pid(&stdout, "web");
-    let worker_pid_after = extract_pid(&stdout, "worker");
+    let processes = get_process_list(&data_dir, work_dir);
+    let web_pid_after = find_process_pid(&processes, "web");
+    let worker_pid_after = find_process_pid(&processes, "worker");
 
     assert_ne!(
         web_pid_before, web_pid_after,
@@ -264,30 +280,16 @@ command = "sleep 999"
         "worker PID should change after restart"
     );
 
-    let web_line = stdout.lines().find(|l| l.contains("web")).unwrap();
-    assert!(
-        web_line.contains("online"),
-        "web should be online, got: {web_line}"
-    );
-    let worker_line = stdout.lines().find(|l| l.contains("worker")).unwrap();
-    assert!(
-        worker_line.contains("online"),
-        "worker should be online, got: {worker_line}"
+    let web = processes.iter().find(|p| p.name == "web").unwrap();
+    assert_eq!(web.status, ProcessStatus::Online, "web should be online");
+    let worker = processes.iter().find(|p| p.name == "worker").unwrap();
+    assert_eq!(
+        worker.status,
+        ProcessStatus::Online,
+        "worker should be online"
     );
 
     kill_daemon(&data_dir, work_dir);
-}
-
-/// Extract a PID from `pm3 list` output for a given process name.
-/// Expects table rows like: "web    12345  online  ..."
-fn extract_pid(list_output: &str, name: &str) -> String {
-    let line = list_output
-        .lines()
-        .find(|l| l.contains(name))
-        .unwrap_or_else(|| panic!("process '{name}' not found in list output"));
-    let fields: Vec<&str> = line.split_whitespace().collect();
-    // PID is the second column
-    fields[1].to_string()
 }
 
 // ── Step 13: Kill command ───────────────────────────────────────────
@@ -361,10 +363,9 @@ command = "sleep 999"
 
     // Start a process and verify it appears
     pm3(&data_dir, work_dir).arg("start").assert().success();
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let processes = get_process_list(&data_dir, work_dir);
     assert!(
-        stdout.contains("web"),
+        processes.iter().any(|p| p.name == "web"),
         "web should appear in list before kill"
     );
 
@@ -373,11 +374,11 @@ command = "sleep 999"
     std::thread::sleep(Duration::from_millis(500));
 
     // List should auto-start a fresh daemon with no processes
-    pm3(&data_dir, work_dir)
-        .arg("list")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("no processes running"));
+    let processes = get_process_list(&data_dir, work_dir);
+    assert!(
+        processes.is_empty(),
+        "process list should be empty after kill"
+    );
 
     // Fresh daemon should have recreated socket and PID file
     assert!(
@@ -417,16 +418,12 @@ command = "sleep 999"
         .stdout(predicate::str::contains("started: web"));
 
     // List should show web online
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let web_line = stdout
-        .lines()
-        .find(|l| l.contains("web"))
+    let processes = get_process_list(&data_dir, work_dir);
+    let web = processes
+        .iter()
+        .find(|p| p.name == "web")
         .expect("web should appear in list");
-    assert!(
-        web_line.contains("online"),
-        "web should be online, got: {web_line}"
-    );
+    assert_eq!(web.status, ProcessStatus::Online, "web should be online");
 
     kill_daemon(&data_dir, work_dir);
 }
@@ -452,25 +449,22 @@ command = "sleep 999"
     pm3(&data_dir, work_dir).arg("start").assert().success();
 
     // List should show both processes online
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let processes = get_process_list(&data_dir, work_dir);
 
-    let web_line = stdout
-        .lines()
-        .find(|l| l.contains("web"))
+    let web = processes
+        .iter()
+        .find(|p| p.name == "web")
         .expect("web should appear in list");
-    assert!(
-        web_line.contains("online"),
-        "web should be online, got: {web_line}"
-    );
+    assert_eq!(web.status, ProcessStatus::Online, "web should be online");
 
-    let worker_line = stdout
-        .lines()
-        .find(|l| l.contains("worker"))
+    let worker = processes
+        .iter()
+        .find(|p| p.name == "worker")
         .expect("worker should appear in list");
-    assert!(
-        worker_line.contains("online"),
-        "worker should be online, got: {worker_line}"
+    assert_eq!(
+        worker.status,
+        ProcessStatus::Online,
+        "worker should be online"
     );
 
     kill_daemon(&data_dir, work_dir);
@@ -502,12 +496,13 @@ command = "sleep 999"
         .stdout(predicate::str::contains("started: web"));
 
     // List should show web but not worker
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(stdout.contains("web"), "web should appear in list");
+    let processes = get_process_list(&data_dir, work_dir);
     assert!(
-        !stdout.contains("worker"),
+        processes.iter().any(|p| p.name == "web"),
+        "web should appear in list"
+    );
+    assert!(
+        !processes.iter().any(|p| p.name == "worker"),
         "worker should NOT appear in list"
     );
 
@@ -539,11 +534,21 @@ command = "sleep 999"
     )
     .unwrap();
 
-    // Start a nonexistent process name
-    pm3(&data_dir, work_dir)
-        .args(["start", "nonexistent"])
-        .assert()
-        .stderr(predicate::str::contains("not found"));
+    // Start a nonexistent process name (use --json to get structured error)
+    let output = pm3(&data_dir, work_dir)
+        .args(["--json", "start", "nonexistent"])
+        .output()
+        .unwrap();
+    let response = parse_json_response(&output);
+    match response {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not found"),
+                "error should contain 'not found', got: {message}"
+            );
+        }
+        other => panic!("expected Error response, got: {other:?}"),
+    }
 
     kill_daemon(&data_dir, work_dir);
 }
@@ -570,32 +575,16 @@ command = "sleep 999"
 
     pm3(&data_dir, work_dir).arg("start").assert().success();
 
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let processes = get_process_list(&data_dir, work_dir);
 
-    // Header row should contain column names
-    let header = stdout.lines().next().expect("should have a header line");
-    assert!(header.contains("name"), "header should contain 'name'");
-    assert!(header.contains("pid"), "header should contain 'pid'");
-    assert!(header.contains("status"), "header should contain 'status'");
-
-    // Both processes should be listed with numeric PIDs and online status
+    // Both processes should be listed with PIDs and online status
     for name in &["web", "worker"] {
-        let line = stdout
-            .lines()
-            .find(|l| l.contains(name))
+        let p = processes
+            .iter()
+            .find(|p| p.name == *name)
             .unwrap_or_else(|| panic!("{name} should appear in list"));
-        assert!(
-            line.contains("online"),
-            "{name} should be online, got: {line}"
-        );
-
-        // PID column should be a number
-        let pid_str = extract_pid(&stdout, name);
-        assert!(
-            pid_str.parse::<u32>().is_ok(),
-            "{name} PID should be numeric, got: {pid_str}"
-        );
+        assert_eq!(p.status, ProcessStatus::Online, "{name} should be online");
+        assert!(p.pid.is_some(), "{name} should have a PID");
     }
 
     kill_daemon(&data_dir, work_dir);
@@ -608,11 +597,11 @@ fn test_e2e_list_no_processes_shows_message() {
     let data_dir = dir.path().join("data");
 
     // No pm3.toml needed — list auto-starts the daemon
-    pm3(&data_dir, work_dir)
-        .arg("list")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("no processes running"));
+    let processes = get_process_list(&data_dir, work_dir);
+    assert!(
+        processes.is_empty(),
+        "process list should be empty when no processes running"
+    );
 
     kill_daemon(&data_dir, work_dir);
 }
@@ -645,11 +634,17 @@ command = "sleep 999"
         .stdout(predicate::str::contains("started:"));
 
     // 2. List → both online, record PIDs
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let web_pid_before = extract_pid(&stdout, "web");
-    let worker_pid_before = extract_pid(&stdout, "worker");
-    assert!(stdout.contains("online"), "processes should be online");
+    let processes = get_process_list(&data_dir, work_dir);
+    let web_pid_before = find_process_pid(&processes, "web");
+    let worker_pid_before = find_process_pid(&processes, "worker");
+    for p in &processes {
+        assert_eq!(
+            p.status,
+            ProcessStatus::Online,
+            "{} should be online",
+            p.name
+        );
+    }
 
     // 3. Restart web → new PID, worker unchanged
     pm3(&data_dir, work_dir)
@@ -658,10 +653,9 @@ command = "sleep 999"
         .success()
         .stdout(predicate::str::contains("restarted: web"));
 
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let web_pid_after = extract_pid(&stdout, "web");
-    let worker_pid_after = extract_pid(&stdout, "worker");
+    let processes = get_process_list(&data_dir, work_dir);
+    let web_pid_after = find_process_pid(&processes, "web");
+    let worker_pid_after = find_process_pid(&processes, "worker");
     assert_ne!(
         web_pid_before, web_pid_after,
         "web PID should change after restart"
@@ -678,17 +672,18 @@ command = "sleep 999"
         .success()
         .stdout(predicate::str::contains("stopped: worker"));
 
-    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let web_line = stdout.lines().find(|l| l.contains("web")).unwrap();
-    assert!(
-        web_line.contains("online"),
+    let processes = get_process_list(&data_dir, work_dir);
+    let web = processes.iter().find(|p| p.name == "web").unwrap();
+    assert_eq!(
+        web.status,
+        ProcessStatus::Online,
         "web should still be online after stopping worker"
     );
-    let worker_line = stdout.lines().find(|l| l.contains("worker")).unwrap();
-    assert!(
-        worker_line.contains("stopped"),
-        "worker should be stopped, got: {worker_line}"
+    let worker = processes.iter().find(|p| p.name == "worker").unwrap();
+    assert_eq!(
+        worker.status,
+        ProcessStatus::Stopped,
+        "worker should be stopped"
     );
 
     // 5. Kill → daemon shuts down, files cleaned up
@@ -708,11 +703,11 @@ command = "sleep 999"
     );
 
     // 6. List → auto-starts fresh daemon, no processes
-    pm3(&data_dir, work_dir)
-        .arg("list")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("no processes running"));
+    let processes = get_process_list(&data_dir, work_dir);
+    assert!(
+        processes.is_empty(),
+        "process list should be empty after kill"
+    );
 
     kill_daemon(&data_dir, work_dir);
 }

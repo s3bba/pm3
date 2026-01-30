@@ -1,4 +1,5 @@
 use clap::Parser;
+use comfy_table::{Table, presets::UTF8_FULL_CONDENSED};
 use pm3::cli::{Cli, Command};
 use pm3::protocol::{Request, Response};
 
@@ -14,7 +15,11 @@ async fn main() -> color_eyre::Result<()> {
         let paths = pm3::paths::Paths::new()?;
         let request = command_to_request(command)?;
         let response = pm3::client::send_request(&paths, &request)?;
-        print_response(&response);
+        if cli.json {
+            print_response_json(&response);
+        } else {
+            print_response(&response);
+        }
     } else {
         println!("pm3: no command specified. Use --help for usage.");
     }
@@ -64,6 +69,11 @@ fn command_to_request(command: Command) -> color_eyre::Result<Request> {
     }
 }
 
+fn print_response_json(response: &Response) {
+    let json = serde_json::to_string(response).expect("failed to serialize response");
+    println!("{json}");
+}
+
 fn print_response(response: &Response) {
     match response {
         Response::Success { message } => {
@@ -80,21 +90,20 @@ fn print_response(response: &Response) {
             if processes.is_empty() {
                 println!("no processes running");
             } else {
-                println!(
-                    "{:<20} {:<10} {:<10} {:<12} {:<10}",
-                    "name", "pid", "status", "uptime", "restarts"
-                );
+                let mut table = Table::new();
+                table.load_preset(UTF8_FULL_CONDENSED);
+                table.set_header(["name", "pid", "status", "uptime", "restarts"]);
                 for p in processes {
                     let pid = p
                         .pid
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "-".to_string());
                     let uptime = format_uptime(p.uptime);
-                    println!(
-                        "{:<20} {:<10} {:<10} {:<12} {:<10}",
-                        p.name, pid, p.status, uptime, p.restarts
-                    );
+                    let status = p.status.to_string();
+                    let restarts = p.restarts.to_string();
+                    table.add_row([&p.name, &pid, &status, &uptime, &restarts]);
                 }
+                println!("{table}");
             }
         }
         Response::ProcessDetail { info } => {
