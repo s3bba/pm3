@@ -1,4 +1,5 @@
 use crate::config::ProcessConfig;
+use crate::log;
 use crate::paths::Paths;
 use crate::pid;
 use crate::process::{self, ProcessTable};
@@ -118,6 +119,19 @@ async fn handle_connection(
     }
 
     let request = protocol::decode_request(&line)?;
+
+    // Log requests need streaming access to the writer
+    if let Request::Log {
+        ref name,
+        lines,
+        follow,
+    } = request
+    {
+        handle_log(name.clone(), lines, follow, processes, paths, &mut writer).await?;
+        writer.shutdown().await?;
+        return Ok(());
+    }
+
     let response = dispatch(request, shutdown_tx, processes, paths).await;
     let encoded = protocol::encode_response(&response)?;
     writer.write_all(&encoded).await?;
@@ -147,6 +161,13 @@ async fn dispatch(
             let _ = shutdown_tx.send(true);
             Response::Success {
                 message: Some("daemon shutting down".to_string()),
+            }
+        }
+        Request::Flush { names } => handle_flush(names, processes, paths).await,
+        Request::Log { .. } => {
+            // Handled in handle_connection directly
+            Response::Error {
+                message: "unexpected dispatch for log".to_string(),
             }
         }
         _ => Response::Error {
@@ -180,24 +201,47 @@ async fn handle_start(
     };
 
     let mut started = Vec::new();
-    let mut table = processes.write().await;
+    let mut children_to_monitor = Vec::new();
 
-    for (name, config) in to_start {
-        if table.contains_key(&name) {
-            continue;
-        }
+    {
+        let mut table = processes.write().await;
 
-        match process::spawn_process(name.clone(), config, paths).await {
-            Ok(managed) => {
-                table.insert(name.clone(), managed);
-                started.push(name);
+        for (name, config) in to_start {
+            if table.contains_key(&name) {
+                continue;
             }
-            Err(e) => {
-                return Response::Error {
-                    message: format!("failed to start '{}': {}", name, e),
-                };
+
+            match process::spawn_process(name.clone(), config, paths).await {
+                Ok((managed, child)) => {
+                    let pid = managed.pid;
+                    let shutdown_rx = managed
+                        .monitor_shutdown
+                        .as_ref()
+                        .map(|tx| tx.subscribe())
+                        .unwrap();
+                    table.insert(name.clone(), managed);
+                    children_to_monitor.push((name.clone(), child, pid, shutdown_rx));
+                    started.push(name);
+                }
+                Err(e) => {
+                    return Response::Error {
+                        message: format!("failed to start '{}': {}", name, e),
+                    };
+                }
             }
         }
+    }
+
+    // Spawn monitors outside the lock
+    for (name, child, pid, shutdown_rx) in children_to_monitor {
+        process::spawn_monitor(
+            name,
+            child,
+            pid,
+            Arc::clone(processes),
+            paths.clone(),
+            shutdown_rx,
+        );
     }
 
     if started.is_empty() {
@@ -255,7 +299,84 @@ async fn handle_restart(
     processes: &Arc<RwLock<ProcessTable>>,
     paths: &Paths,
 ) -> Response {
-    let mut table = processes.write().await;
+    let mut restarted = Vec::new();
+    let mut children_to_monitor = Vec::new();
+
+    {
+        let mut table = processes.write().await;
+
+        let targets: Vec<String> = match names {
+            Some(ref requested) => {
+                for name in requested {
+                    if !table.contains_key(name) {
+                        return Response::Error {
+                            message: format!("process not found: {name}"),
+                        };
+                    }
+                }
+                requested.clone()
+            }
+            None => table.keys().cloned().collect(),
+        };
+
+        for name in &targets {
+            let managed = table.get_mut(name).unwrap();
+            let config = managed.config.clone();
+            let old_restarts = managed.restarts;
+
+            if managed.status != protocol::ProcessStatus::Stopped
+                && let Err(e) = managed.graceful_stop().await
+            {
+                return Response::Error {
+                    message: format!("failed to stop '{}': {}", name, e),
+                };
+            }
+
+            match process::spawn_process(name.clone(), config, paths).await {
+                Ok((mut new_managed, child)) => {
+                    new_managed.restarts = old_restarts + 1;
+                    let pid = new_managed.pid;
+                    let shutdown_rx = new_managed
+                        .monitor_shutdown
+                        .as_ref()
+                        .map(|tx| tx.subscribe())
+                        .unwrap();
+                    table.insert(name.clone(), new_managed);
+                    children_to_monitor.push((name.clone(), child, pid, shutdown_rx));
+                    restarted.push(name.clone());
+                }
+                Err(e) => {
+                    return Response::Error {
+                        message: format!("failed to restart '{}': {}", name, e),
+                    };
+                }
+            }
+        }
+    }
+
+    // Spawn monitors outside the lock
+    for (name, child, pid, shutdown_rx) in children_to_monitor {
+        process::spawn_monitor(
+            name,
+            child,
+            pid,
+            Arc::clone(processes),
+            paths.clone(),
+            shutdown_rx,
+        );
+    }
+
+    Response::Success {
+        message: Some(format!("restarted: {}", restarted.join(", "))),
+    }
+}
+
+async fn handle_flush(
+    names: Option<Vec<String>>,
+    processes: &Arc<RwLock<ProcessTable>>,
+    paths: &Paths,
+) -> Response {
+    let table = processes.read().await;
 
     let targets: Vec<String> = match names {
         Some(ref requested) => {
@@ -271,35 +392,141 @@ async fn handle_restart(
         None => table.keys().cloned().collect(),
     };
 
-    let mut restarted = Vec::new();
-    for name in &targets {
-        let managed = table.get_mut(name).unwrap();
-        let config = managed.config.clone();
-        let old_restarts = managed.restarts;
+    drop(table);
 
-        if managed.status != protocol::ProcessStatus::Stopped
-            && let Err(e) = managed.graceful_stop().await
+    for name in &targets {
+        // Truncate main log files
+        let stdout_path = paths.stdout_log(name);
+        let stderr_path = paths.stderr_log(name);
+
+        if stdout_path.exists()
+            && let Err(e) = fs::write(&stdout_path, b"").await
         {
             return Response::Error {
-                message: format!("failed to stop '{}': {}", name, e),
+                message: format!("failed to truncate stdout log for '{}': {}", name, e),
+            };
+        }
+        if stderr_path.exists()
+            && let Err(e) = fs::write(&stderr_path, b"").await
+        {
+            return Response::Error {
+                message: format!("failed to truncate stderr log for '{}': {}", name, e),
             };
         }
 
-        match process::spawn_process(name.clone(), config, paths).await {
-            Ok(mut new_managed) => {
-                new_managed.restarts = old_restarts + 1;
-                table.insert(name.clone(), new_managed);
-                restarted.push(name.clone());
-            }
-            Err(e) => {
-                return Response::Error {
-                    message: format!("failed to restart '{}': {}", name, e),
-                };
-            }
+        // Delete rotated files
+        for i in 1..=log::LOG_ROTATION_KEEP {
+            let _ = fs::remove_file(paths.rotated_stdout_log(name, i)).await;
+            let _ = fs::remove_file(paths.rotated_stderr_log(name, i)).await;
         }
     }
 
     Response::Success {
-        message: Some(format!("restarted: {}", restarted.join(", "))),
+        message: Some(format!("flushed logs: {}", targets.join(", "))),
+    }
+}
+
+async fn handle_log(
+    name: Option<String>,
+    lines: usize,
+    follow: bool,
+    processes: &Arc<RwLock<ProcessTable>>,
+    paths: &Paths,
+    writer: &mut (impl AsyncWriteExt + Unpin),
+) -> color_eyre::Result<()> {
+    let table = processes.read().await;
+
+    // Determine which processes to show logs for
+    let targets: Vec<String> = match name {
+        Some(ref n) => {
+            if !table.contains_key(n) {
+                let resp = Response::Error {
+                    message: format!("process not found: {n}"),
+                };
+                let encoded = protocol::encode_response(&resp)?;
+                writer.write_all(&encoded).await?;
+                return Ok(());
+            }
+            vec![n.clone()]
+        }
+        None => table.keys().cloned().collect(),
+    };
+
+    let multi = targets.len() > 1;
+
+    // Send tail lines
+    for target in &targets {
+        let stdout_lines = log::tail_file(&paths.stdout_log(target), lines).unwrap_or_default();
+        let stderr_lines = log::tail_file(&paths.stderr_log(target), lines).unwrap_or_default();
+
+        // Interleave stdout and stderr (stdout first, then stderr for simplicity)
+        for line in stdout_lines {
+            let resp = Response::LogLine {
+                name: if multi { Some(target.clone()) } else { None },
+                line,
+            };
+            let encoded = protocol::encode_response(&resp)?;
+            writer.write_all(&encoded).await?;
+        }
+        for line in stderr_lines {
+            let resp = Response::LogLine {
+                name: if multi { Some(target.clone()) } else { None },
+                line,
+            };
+            let encoded = protocol::encode_response(&resp)?;
+            writer.write_all(&encoded).await?;
+        }
+    }
+
+    if !follow {
+        return Ok(());
+    }
+
+    // Subscribe to broadcasters for follow mode
+    let mut receivers = Vec::new();
+    for target in &targets {
+        if let Some(managed) = table.get(target) {
+            let rx = managed.log_broadcaster.subscribe();
+            receivers.push((target.clone(), rx));
+        }
+    }
+
+    // Drop read lock before entering follow loop
+    drop(table);
+
+    writer.flush().await?;
+
+    // Follow loop: receive from all broadcasters
+    loop {
+        // Use a simple polling approach across receivers
+        let mut any_received = false;
+        for (target, rx) in &mut receivers {
+            match rx.try_recv() {
+                Ok(entry) => {
+                    let resp = Response::LogLine {
+                        name: if multi { Some(target.clone()) } else { None },
+                        line: entry.line,
+                    };
+                    let encoded = protocol::encode_response(&resp)?;
+                    if writer.write_all(&encoded).await.is_err() {
+                        return Ok(()); // Client disconnected
+                    }
+                    any_received = true;
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {}
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                    return Ok(());
+                }
+            }
+        }
+
+        if !any_received {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        if writer.flush().await.is_err() {
+            return Ok(()); // Client disconnected
+        }
     }
 }

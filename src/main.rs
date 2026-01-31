@@ -15,14 +15,28 @@ async fn main() -> color_eyre::Result<()> {
     } else if let Some(command) = cli.command {
         let paths = pm3::paths::Paths::new()?;
         let request = command_to_request(command)?;
-        let response = pm3::client::send_request(&paths, &request)?;
-        if cli.json {
-            print_response_json(&response);
+
+        if matches!(request, Request::Log { .. }) {
+            // Log uses streaming — read multiple responses until EOF
+            if cli.json {
+                pm3::client::send_request_streaming(&paths, &request, |resp| {
+                    print_response_json(resp);
+                })?;
+            } else {
+                pm3::client::send_request_streaming(&paths, &request, |resp| {
+                    print_response(resp);
+                })?;
+            }
         } else {
-            print_response(&response);
-            if should_auto_list(&request) {
-                let list_resp = pm3::client::send_request(&paths, &Request::List)?;
-                print_response(&list_resp);
+            let response = pm3::client::send_request(&paths, &request)?;
+            if cli.json {
+                print_response_json(&response);
+            } else {
+                print_response(&response);
+                if should_auto_list(&request) {
+                    let list_resp = pm3::client::send_request(&paths, &Request::List)?;
+                    print_response(&list_resp);
+                }
             }
         }
     } else {

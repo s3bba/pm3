@@ -52,6 +52,18 @@ impl Paths {
     pub fn stderr_log(&self, name: &str) -> PathBuf {
         self.data_dir.join("logs").join(format!("{name}-err.log"))
     }
+
+    pub fn rotated_stdout_log(&self, name: &str, n: u32) -> PathBuf {
+        self.data_dir
+            .join("logs")
+            .join(format!("{name}-out.log.{n}"))
+    }
+
+    pub fn rotated_stderr_log(&self, name: &str, n: u32) -> PathBuf {
+        self.data_dir
+            .join("logs")
+            .join(format!("{name}-err.log.{n}"))
+    }
 }
 
 #[cfg(test)]
@@ -124,5 +136,45 @@ mod tests {
         let paths = Paths::with_base(PathBuf::from("/tmp/pm3-test"));
         let log = paths.stderr_log("web");
         assert!(log.ends_with("logs/web-err.log"));
+    }
+
+    #[test]
+    fn test_rotated_stdout_log_format() {
+        let paths = Paths::with_base(PathBuf::from("/tmp/pm3-test"));
+        assert!(
+            paths
+                .rotated_stdout_log("web", 1)
+                .ends_with("logs/web-out.log.1")
+        );
+        assert!(
+            paths
+                .rotated_stdout_log("web", 2)
+                .ends_with("logs/web-out.log.2")
+        );
+        assert!(
+            paths
+                .rotated_stdout_log("web", 3)
+                .ends_with("logs/web-out.log.3")
+        );
+    }
+
+    #[test]
+    fn test_rotated_stderr_log_format() {
+        let paths = Paths::with_base(PathBuf::from("/tmp/pm3-test"));
+        assert!(
+            paths
+                .rotated_stderr_log("web", 1)
+                .ends_with("logs/web-err.log.1")
+        );
+        assert!(
+            paths
+                .rotated_stderr_log("web", 2)
+                .ends_with("logs/web-err.log.2")
+        );
+        assert!(
+            paths
+                .rotated_stderr_log("web", 3)
+                .ends_with("logs/web-err.log.3")
+        );
     }
 }

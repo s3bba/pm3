@@ -2,6 +2,7 @@ pub mod cli;
 pub mod client;
 pub mod config;
 pub mod daemon;
+pub mod log;
 pub mod paths;
 pub mod pid;
 pub mod process;

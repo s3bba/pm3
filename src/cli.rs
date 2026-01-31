@@ -40,7 +40,7 @@ pub enum Command {
     Save,
     /// Restore previously saved processes
     Resurrect,
-    /// Remove processes from the managed list
+    /// Clear log files for processes
     Flush { names: Vec<String> },
     /// View process logs
     Log {

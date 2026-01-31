@@ -23,6 +23,34 @@ pub fn send_request(paths: &Paths, request: &Request) -> color_eyre::Result<Resp
     Ok(response)
 }
 
+pub fn send_request_streaming<F>(
+    paths: &Paths,
+    request: &Request,
+    mut on_response: F,
+) -> color_eyre::Result<()>
+where
+    F: FnMut(&Response),
+{
+    ensure_daemon_running(paths)?;
+    let mut stream = connect_with_retry(paths, 10, Duration::from_millis(200))?;
+
+    let encoded = protocol::encode_request(request)?;
+    stream.write_all(&encoded)?;
+    stream.shutdown(std::net::Shutdown::Write)?;
+
+    let reader = BufReader::new(stream);
+    for line_result in reader.lines() {
+        let line = line_result?;
+        if line.is_empty() {
+            continue;
+        }
+        let response = protocol::decode_response(&line)?;
+        on_response(&response);
+    }
+
+    Ok(())
+}
+
 fn ensure_daemon_running(paths: &Paths) -> color_eyre::Result<()> {
     if pid::is_daemon_running_sync(paths)? {
         return Ok(());

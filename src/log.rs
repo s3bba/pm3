@@ -1,0 +1,321 @@
+use serde::{Deserialize, Serialize};
+use std::io::{self, BufRead};
+use std::path::Path;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
+use tokio::sync::broadcast;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// 10 MB rotation threshold
+pub const LOG_ROTATION_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Keep up to 3 rotated files (.1, .2, .3)
+pub const LOG_ROTATION_KEEP: u32 = 3;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LogStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub stream: LogStream,
+    pub line: String,
+}
+
+// ---------------------------------------------------------------------------
+// tail_file — read last N lines from a file
+// ---------------------------------------------------------------------------
+
+pub fn tail_file(path: &Path, n: usize) -> io::Result<Vec<String>> {
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+
+    let reader = io::BufReader::new(file);
+    let all_lines: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
+
+    if all_lines.len() <= n {
+        Ok(all_lines)
+    } else {
+        Ok(all_lines[all_lines.len() - n..].to_vec())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// rotate_log — shift rotated files and rename current to .1
+// ---------------------------------------------------------------------------
+
+pub fn rotate_log(path: &Path, max_rotations: u32) -> io::Result<()> {
+    // Delete the oldest rotated file if it exists
+    let oldest = rotated_path(path, max_rotations);
+    if oldest.exists() {
+        std::fs::remove_file(&oldest)?;
+    }
+
+    // Shift .2 -> .3, .1 -> .2, etc.
+    for i in (1..max_rotations).rev() {
+        let from = rotated_path(path, i);
+        let to = rotated_path(path, i + 1);
+        if from.exists() {
+            std::fs::rename(&from, &to)?;
+        }
+    }
+
+    // Rename current to .1
+    if path.exists() {
+        std::fs::rename(path, rotated_path(path, 1))?;
+    }
+
+    Ok(())
+}
+
+fn rotated_path(path: &Path, n: u32) -> std::path::PathBuf {
+    let mut p = path.as_os_str().to_owned();
+    p.push(format!(".{n}"));
+    p.into()
+}
+
+// ---------------------------------------------------------------------------
+// spawn_log_copier — tokio task that reads piped child output
+// ---------------------------------------------------------------------------
+
+pub fn spawn_log_copier(
+    name: String,
+    stream: LogStream,
+    reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+    log_path: std::path::PathBuf,
+    log_date_format: Option<String>,
+    broadcaster: broadcast::Sender<LogEntry>,
+) {
+    tokio::spawn(async move {
+        if let Err(e) =
+            run_log_copier(name, stream, reader, log_path, log_date_format, broadcaster).await
+        {
+            eprintln!("log copier error: {e}");
+        }
+    });
+}
+
+async fn run_log_copier(
+    _name: String,
+    stream: LogStream,
+    reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+    log_path: std::path::PathBuf,
+    log_date_format: Option<String>,
+    broadcaster: broadcast::Sender<LogEntry>,
+) -> io::Result<()> {
+    let mut buf_reader = TokioBufReader::new(reader);
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .await?;
+
+    let mut byte_count: u64 = {
+        let meta = tokio::fs::metadata(&log_path).await?;
+        meta.len()
+    };
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = buf_reader.read_line(&mut line).await?;
+        if n == 0 {
+            break; // EOF — child exited
+        }
+
+        let formatted = if let Some(ref fmt) = log_date_format {
+            let ts = chrono::Local::now().format(fmt);
+            format!("{ts} | {line}")
+        } else {
+            line.clone()
+        };
+
+        // Check rotation before writing
+        let line_bytes = formatted.as_bytes();
+        if byte_count + line_bytes.len() as u64 > LOG_ROTATION_SIZE {
+            // Flush and close current file, rotate, reopen
+            file.flush().await?;
+            drop(file);
+            rotate_log(&log_path, LOG_ROTATION_KEEP)?;
+            file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .await?;
+            byte_count = 0;
+        }
+
+        file.write_all(line_bytes).await?;
+        byte_count += line_bytes.len() as u64;
+
+        // Broadcast to any follow subscribers (ignore if no receivers)
+        let _ = broadcaster.send(LogEntry {
+            stream: stream.clone(),
+            line: line.trim_end().to_string(),
+        });
+    }
+
+    file.flush().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_tail_file_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.log");
+        std::fs::File::create(&path).unwrap();
+        let lines = tail_file(&path, 10).unwrap();
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_tail_file_fewer_than_n() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("few.log");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "line1").unwrap();
+        writeln!(f, "line2").unwrap();
+        let lines = tail_file(&path, 10).unwrap();
+        assert_eq!(lines, vec!["line1", "line2"]);
+    }
+
+    #[test]
+    fn test_tail_file_exact_n() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("exact.log");
+        let mut f = std::fs::File::create(&path).unwrap();
+        for i in 1..=5 {
+            writeln!(f, "line{i}").unwrap();
+        }
+        let lines = tail_file(&path, 5).unwrap();
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[0], "line1");
+        assert_eq!(lines[4], "line5");
+    }
+
+    #[test]
+    fn test_tail_file_last_n() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many.log");
+        let mut f = std::fs::File::create(&path).unwrap();
+        for i in 1..=20 {
+            writeln!(f, "line{i}").unwrap();
+        }
+        let lines = tail_file(&path, 3).unwrap();
+        assert_eq!(lines, vec!["line18", "line19", "line20"]);
+    }
+
+    #[test]
+    fn test_tail_file_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nope.log");
+        let lines = tail_file(&path, 10).unwrap();
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_tail_file_zero_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zero.log");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "line1").unwrap();
+        let lines = tail_file(&path, 0).unwrap();
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_rotate_log_creates_dot1() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.log");
+        std::fs::write(&path, "data").unwrap();
+
+        rotate_log(&path, 3).unwrap();
+
+        assert!(!path.exists());
+        assert!(rotated_path(&path, 1).exists());
+        assert_eq!(
+            std::fs::read_to_string(rotated_path(&path, 1)).unwrap(),
+            "data"
+        );
+    }
+
+    #[test]
+    fn test_rotate_log_shifts_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.log");
+        std::fs::write(rotated_path(&path, 1), "old1").unwrap();
+        std::fs::write(&path, "current").unwrap();
+
+        rotate_log(&path, 3).unwrap();
+
+        assert!(!path.exists());
+        assert_eq!(
+            std::fs::read_to_string(rotated_path(&path, 1)).unwrap(),
+            "current"
+        );
+        assert_eq!(
+            std::fs::read_to_string(rotated_path(&path, 2)).unwrap(),
+            "old1"
+        );
+    }
+
+    #[test]
+    fn test_rotate_log_deletes_oldest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.log");
+        std::fs::write(rotated_path(&path, 1), "r1").unwrap();
+        std::fs::write(rotated_path(&path, 2), "r2").unwrap();
+        std::fs::write(rotated_path(&path, 3), "r3").unwrap();
+        std::fs::write(&path, "current").unwrap();
+
+        rotate_log(&path, 3).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(rotated_path(&path, 1)).unwrap(),
+            "current"
+        );
+        assert_eq!(
+            std::fs::read_to_string(rotated_path(&path, 2)).unwrap(),
+            "r1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(rotated_path(&path, 3)).unwrap(),
+            "r2"
+        );
+        // r3 was deleted
+    }
+
+    #[test]
+    fn test_rotation_size_constant() {
+        assert_eq!(LOG_ROTATION_SIZE, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_rotation_keep_constant() {
+        assert_eq!(LOG_ROTATION_KEEP, 3);
+    }
+}
