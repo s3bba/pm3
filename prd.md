@@ -378,7 +378,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Integration: restart count reaches `max_restarts`, process is NOT restarted, status → `errored`
     - Integration: `pm3 list` shows correct restart count
 
-20. Exponential backoff — increasing delay between restarts
+20. ~~Exponential backoff — increasing delay between restarts~~ ✅
     - Unit: backoff sequence is correct (e.g., 100ms, 200ms, 400ms, ...)
     - Integration: rapid crashes → delays increase between restarts
     - Unit: backoff caps at a maximum delay

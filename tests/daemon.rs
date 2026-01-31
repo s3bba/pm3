@@ -7,7 +7,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 fn test_config(command: &str) -> ProcessConfig {
@@ -2166,6 +2166,59 @@ async fn test_auto_restart_list_shows_restart_count() {
 
             assert_eq!(crasher.status, ProcessStatus::Errored);
             assert_eq!(crasher.restarts, 2);
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+// ── Item 20: Exponential backoff ────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_exponential_backoff_increases_delay_between_restarts() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'exit 1'");
+    config.restart = Some(RestartPolicy::OnFailure);
+    config.max_restarts = Some(3);
+
+    let mut configs = HashMap::new();
+    configs.insert("backoff-test".to_string(), config);
+
+    let start = Instant::now();
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    // Wait for all 3 restarts to exhaust.
+    // Backoff: 100ms (count=0) + 200ms (count=1) + 400ms (count=2) = 700ms minimum
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+
+    let elapsed = start.elapsed();
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1);
+            let info = &processes[0];
+            assert_eq!(info.status, ProcessStatus::Errored);
+            assert_eq!(info.restarts, 3);
+            // Total backoff must be at least 700ms (100 + 200 + 400)
+            assert!(
+                elapsed >= Duration::from_millis(700),
+                "expected at least 700ms of backoff, but only {elapsed:?} elapsed"
+            );
         }
         other => panic!("expected ProcessList, got: {other:?}"),
     }
