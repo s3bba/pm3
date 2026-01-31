@@ -373,7 +373,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Integration: `restart = "on-failure"`, exit 0 → not restarted, exit 1 → restarted
     - Integration: `stop_exit_codes = [42]`, exit 42 → not restarted even under `on-failure`
 
-19. Auto-restart — detect child exit, restart based on policy, track count
+19. ~~Auto-restart — detect child exit, restart based on policy, track count~~ ✅
     - Integration: process crashes, daemon restarts it, restart count increments
     - Integration: restart count reaches `max_restarts`, process is NOT restarted, status → `errored`
     - Integration: `pm3 list` shows correct restart count

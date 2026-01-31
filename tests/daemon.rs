@@ -2036,3 +2036,140 @@ async fn test_restart_policy_stop_exit_codes_prevents_restart() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ── Item 19: Auto-restart ───────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_auto_restart_recovers_after_crash() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let marker = dir.path().join("marker");
+    let cmd = format!(
+        "sh -c 'MARKER={}; if [ ! -f $MARKER ]; then touch $MARKER; exit 1; fi; sleep 999'",
+        marker.display()
+    );
+    let mut config = test_config(&cmd);
+    config.restart = Some(RestartPolicy::OnFailure);
+    config.max_restarts = Some(5);
+
+    let mut configs = HashMap::new();
+    configs.insert("crash-once".to_string(), config);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1);
+            let info = &processes[0];
+            assert_eq!(info.status, ProcessStatus::Online);
+            assert_eq!(info.restarts, 1);
+            assert!(info.pid.is_some(), "pid should be present after recovery");
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_auto_restart_stops_after_max_restarts() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'exit 1'");
+    config.restart = Some(RestartPolicy::OnFailure);
+    config.max_restarts = Some(3);
+
+    let mut configs = HashMap::new();
+    configs.insert("max-restart".to_string(), config);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1);
+            let info = &processes[0];
+            assert_eq!(info.status, ProcessStatus::Errored);
+            assert_eq!(info.restarts, 3);
+            assert!(info.pid.is_none(), "pid should be None after max restarts");
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_auto_restart_list_shows_restart_count() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let stable_config = test_config("sleep 999");
+
+    let mut crasher_config = test_config("sh -c 'exit 1'");
+    crasher_config.restart = Some(RestartPolicy::OnFailure);
+    crasher_config.max_restarts = Some(2);
+
+    let mut configs = HashMap::new();
+    configs.insert("stable".to_string(), stable_config);
+    configs.insert("crasher".to_string(), crasher_config);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 2);
+            let stable = processes.iter().find(|p| p.name == "stable").unwrap();
+            let crasher = processes.iter().find(|p| p.name == "crasher").unwrap();
+
+            assert_eq!(stable.status, ProcessStatus::Online);
+            assert_eq!(stable.restarts, 0);
+
+            assert_eq!(crasher.status, ProcessStatus::Errored);
+            assert_eq!(crasher.restarts, 2);
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
