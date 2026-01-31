@@ -147,9 +147,11 @@ async fn dispatch(
     paths: &Paths,
 ) -> Response {
     match request {
-        Request::Start { configs, names, .. } => {
-            handle_start(configs, names, processes, paths).await
-        }
+        Request::Start {
+            configs,
+            names,
+            env,
+        } => handle_start(configs, names, env, processes, paths).await,
         Request::List => {
             let table = processes.read().await;
             let infos: Vec<_> = table.values().map(|m| m.to_process_info()).collect();
@@ -179,10 +181,11 @@ async fn dispatch(
 async fn handle_start(
     configs: HashMap<String, ProcessConfig>,
     names: Option<Vec<String>>,
+    env: Option<String>,
     processes: &Arc<RwLock<ProcessTable>>,
     paths: &Paths,
 ) -> Response {
-    let to_start: Vec<(String, ProcessConfig)> = match names {
+    let mut to_start: Vec<(String, ProcessConfig)> = match names {
         Some(ref requested) => {
             let mut selected = Vec::new();
             for name in requested {
@@ -199,6 +202,25 @@ async fn handle_start(
         }
         None => configs.into_iter().collect(),
     };
+
+    if let Some(ref env_name) = env {
+        let any_has_env = to_start
+            .iter()
+            .any(|(_, config)| config.environments.contains_key(env_name));
+        if !any_has_env {
+            return Response::Error {
+                message: format!("unknown environment: '{}'", env_name),
+            };
+        }
+        for (_, config) in &mut to_start {
+            if let Some(env_vars) = config.environments.get(env_name) {
+                let base = config.env.get_or_insert_with(HashMap::new);
+                for (k, v) in env_vars {
+                    base.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
 
     let mut started = Vec::new();
     let mut children_to_monitor = Vec::new();

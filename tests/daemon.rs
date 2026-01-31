@@ -2670,3 +2670,138 @@ async fn test_env_file_array_loads_multiple_files() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ---------------------------------------------------------------------------
+// Per-environment config (step 24)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_env_start_merges_env_production() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'echo BASE=$BASE PROD_VAR=$PROD_VAR'");
+    config.env = Some(HashMap::from([(
+        "BASE".to_string(),
+        "base_val".to_string(),
+    )]));
+    config.environments.insert(
+        "production".to_string(),
+        HashMap::from([("PROD_VAR".to_string(), "prod_val".to_string())]),
+    );
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), config);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: Some("production".to_string()),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stdout_log = paths.stdout_log("web");
+    assert!(stdout_log.exists(), "stdout log file should exist");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("BASE=base_val"),
+        "should contain 'BASE=base_val', got: {content}"
+    );
+    assert!(
+        content.contains("PROD_VAR=prod_val"),
+        "should contain 'PROD_VAR=prod_val', got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_env_production_overrides_base() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'echo MY_VAR=$MY_VAR'");
+    config.env = Some(HashMap::from([("MY_VAR".to_string(), "base".to_string())]));
+    config.environments.insert(
+        "production".to_string(),
+        HashMap::from([("MY_VAR".to_string(), "prod".to_string())]),
+    );
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), config);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: Some("production".to_string()),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stdout_log = paths.stdout_log("web");
+    assert!(stdout_log.exists(), "stdout log file should exist");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("MY_VAR=prod"),
+        "production env should override base, got: {content}"
+    );
+    assert!(
+        !content.contains("MY_VAR=base"),
+        "base value should NOT appear, got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_env_unknown_name_errors() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), test_config("sleep 999"));
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: Some("nonexistent".to_string()),
+        },
+    )
+    .await;
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("nonexistent"),
+                "error should mention the environment name, got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}

@@ -401,7 +401,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Integration: inline `env` overrides `env_file` values
     - Integration: missing env file prints an error
 
-24. Per-environment config — `env_production` sections, `--env` flag
+24. ~~Per-environment config — `env_production` sections, `--env` flag~~ ✅
     - Unit: `env_production` parsed from config
     - Integration: `pm3 start --env production` merges base `env` + `env_production`
     - Integration: production values override base values
