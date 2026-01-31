@@ -179,6 +179,29 @@ fn print_response(response: &Response) {
             if let Some(cwd) = &info.cwd {
                 println!("  {} {cwd}", "cwd:".dimmed());
             }
+            println!("  {} {}", "uptime:".dimmed(), format_uptime(info.uptime));
+            println!("  {} {}", "restarts:".dimmed(), info.restarts);
+            if let Some(group) = &info.group {
+                println!("  {} {group}", "group:".dimmed());
+            }
+            if let Some(env) = &info.env {
+                println!("  {}", "env:".dimmed());
+                for (k, v) in env {
+                    println!("    {k}={v}");
+                }
+            }
+            if let Some(stdout_log) = &info.stdout_log {
+                println!("  {} {stdout_log}", "stdout_log:".dimmed());
+            }
+            if let Some(stderr_log) = &info.stderr_log {
+                println!("  {} {stderr_log}", "stderr_log:".dimmed());
+            }
+            if let Some(health_check) = &info.health_check {
+                println!("  {} {health_check}", "health_check:".dimmed());
+            }
+            if let Some(depends_on) = &info.depends_on {
+                println!("  {} {}", "depends_on:".dimmed(), depends_on.join(", "));
+            }
         }
         Response::LogLine { name, line } => {
             if let Some(name) = name {

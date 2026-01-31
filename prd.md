@@ -407,7 +407,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Integration: production values override base values
     - Integration: `--env` with unknown environment name errors
 
-25. Process info command — `pm3 info <name>`
+25. ~~Process info command — `pm3 info <name>`~~
     - E2E: `pm3 info web` prints PID, status, command, cwd, env, uptime, restarts, log paths
     - E2E: `pm3 info nonexistent` prints an error
     - Integration: all fields populated correctly

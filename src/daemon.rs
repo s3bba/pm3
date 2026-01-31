@@ -165,6 +165,7 @@ async fn dispatch(
                 message: Some("daemon shutting down".to_string()),
             }
         }
+        Request::Info { name } => handle_info(name, processes, paths).await,
         Request::Flush { names } => handle_flush(names, processes, paths).await,
         Request::Log { .. } => {
             // Handled in handle_connection directly
@@ -445,6 +446,25 @@ async fn handle_flush(
 
     Response::Success {
         message: Some(format!("flushed logs: {}", targets.join(", "))),
+    }
+}
+
+async fn handle_info(
+    name: String,
+    processes: &Arc<RwLock<ProcessTable>>,
+    paths: &Paths,
+) -> Response {
+    let table = processes.read().await;
+    match table.get(&name) {
+        Some(managed) => {
+            let detail = managed.to_process_detail(paths);
+            Response::ProcessDetail {
+                info: Box::new(detail),
+            }
+        }
+        None => Response::Error {
+            message: format!("process not found: {name}"),
+        },
     }
 }
 

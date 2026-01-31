@@ -1,7 +1,7 @@
 use crate::config::{ProcessConfig, RestartPolicy};
 use crate::log::{self, LogEntry, LogStream};
 use crate::paths::Paths;
-use crate::protocol::{ProcessInfo, ProcessStatus};
+use crate::protocol::{ProcessDetail, ProcessInfo, ProcessStatus};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -96,6 +96,27 @@ impl ManagedProcess {
             cpu_percent: None,
             memory_bytes: None,
             group: self.config.group.clone(),
+        }
+    }
+
+    pub fn to_process_detail(&self, paths: &Paths) -> ProcessDetail {
+        ProcessDetail {
+            name: self.name.clone(),
+            pid: self.pid,
+            status: self.status,
+            uptime: Some(self.started_at.elapsed().as_secs()),
+            restarts: self.restarts,
+            cpu_percent: None,
+            memory_bytes: None,
+            group: self.config.group.clone(),
+            command: self.config.command.clone(),
+            cwd: self.config.cwd.clone(),
+            env: self.config.env.clone(),
+            exit_code: None,
+            stdout_log: Some(paths.stdout_log(&self.name).to_string_lossy().into_owned()),
+            stderr_log: Some(paths.stderr_log(&self.name).to_string_lossy().into_owned()),
+            health_check: self.config.health_check.clone(),
+            depends_on: self.config.depends_on.clone(),
         }
     }
 

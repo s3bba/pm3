@@ -2805,3 +2805,88 @@ async fn test_env_unknown_name_errors() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ── Step 25: Info command ───────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_info_returns_process_detail() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sleep 999");
+    config.cwd = Some("/tmp".to_string());
+    config.env = Some(HashMap::from([("MY_VAR".to_string(), "hello".to_string())]));
+    config.group = Some("backend".to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), config);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Info {
+            name: "web".to_string(),
+        },
+    )
+    .await;
+    match &resp {
+        Response::ProcessDetail { info } => {
+            assert_eq!(info.name, "web");
+            assert_eq!(info.status, ProcessStatus::Online);
+            assert!(info.pid.is_some(), "should have a PID");
+            assert_eq!(info.command, "sleep 999");
+            assert_eq!(info.cwd.as_deref(), Some("/tmp"));
+            assert_eq!(info.group.as_deref(), Some("backend"));
+            assert!(info.uptime.is_some(), "should have uptime");
+            assert_eq!(info.restarts, 0);
+            let env = info.env.as_ref().unwrap();
+            assert_eq!(env.get("MY_VAR").unwrap(), "hello");
+            assert!(info.stdout_log.is_some(), "should have stdout log path");
+            assert!(info.stderr_log.is_some(), "should have stderr log path");
+        }
+        other => panic!("expected ProcessDetail, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_info_nonexistent_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Info {
+            name: "nonexistent".to_string(),
+        },
+    )
+    .await;
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not found"),
+                "error should contain 'not found', got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}

@@ -909,3 +909,92 @@ command = "sh -c 'echo worker_output'"
 
     kill_daemon(&data_dir, work_dir);
 }
+
+// ── Step 25: Info command ───────────────────────────────────────────
+
+#[test]
+fn test_e2e_info_prints_detail() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+cwd = "/tmp"
+group = "backend"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    // Use --json to get structured response
+    let output = pm3(&data_dir, work_dir)
+        .args(["--json", "info", "web"])
+        .output()
+        .unwrap();
+    let response = parse_json_response(&output);
+    match response {
+        Response::ProcessDetail { info } => {
+            assert_eq!(info.name, "web");
+            assert_eq!(info.status, ProcessStatus::Online);
+            assert!(info.pid.is_some(), "should have a PID");
+            assert_eq!(info.command, "sleep 999");
+            assert!(info.stdout_log.is_some(), "should have stdout log path");
+            assert!(info.stderr_log.is_some(), "should have stderr log path");
+        }
+        other => panic!("expected ProcessDetail, got: {other:?}"),
+    }
+
+    // Also verify human-readable output contains key fields
+    pm3(&data_dir, work_dir)
+        .args(["info", "web"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("web"))
+        .stdout(predicate::str::contains("sleep 999"))
+        .stdout(predicate::str::contains("pid:"))
+        .stdout(predicate::str::contains("stdout_log:"))
+        .stdout(predicate::str::contains("stderr_log:"));
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
+fn test_e2e_info_nonexistent_errors() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    // Use --json to get structured error
+    let output = pm3(&data_dir, work_dir)
+        .args(["--json", "info", "nonexistent"])
+        .output()
+        .unwrap();
+    let response = parse_json_response(&output);
+    match response {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not found"),
+                "error should contain 'not found', got: {message}"
+            );
+        }
+        other => panic!("expected Error response, got: {other:?}"),
+    }
+
+    kill_daemon(&data_dir, work_dir);
+}
