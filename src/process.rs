@@ -169,6 +169,10 @@ pub async fn spawn_process(
         cmd.current_dir(cwd);
     }
 
+    if let Some(ref env_vars) = config.env {
+        cmd.envs(env_vars);
+    }
+
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());

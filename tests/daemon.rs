@@ -2331,3 +2331,148 @@ async fn test_min_uptime_quick_crash_increments_restart_count() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ---------------------------------------------------------------------------
+// Environment variables (step 22)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_env_vars_passed_to_child() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'echo $FOO'");
+    config.env = Some(HashMap::from([("FOO".to_string(), "bar".to_string())]));
+
+    let mut configs = HashMap::new();
+    configs.insert("env-test".to_string(), config);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stdout_log = paths.stdout_log("env-test");
+    assert!(stdout_log.exists(), "stdout log file should exist");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("bar"),
+        "stdout log should contain 'bar', got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_multiple_env_vars_passed_correctly() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'echo A=$A B=$B'");
+    config.env = Some(HashMap::from([
+        ("A".to_string(), "1".to_string()),
+        ("B".to_string(), "2".to_string()),
+    ]));
+
+    let mut configs = HashMap::new();
+    configs.insert("multi-env".to_string(), config);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stdout_log = paths.stdout_log("multi-env");
+    assert!(stdout_log.exists(), "stdout log file should exist");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("A=1"),
+        "stdout log should contain 'A=1', got: {content}"
+    );
+    assert!(
+        content.contains("B=2"),
+        "stdout log should contain 'B=2', got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_env_vars_dont_leak_between_processes() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config_with_env = test_config("sh -c 'echo SECRET=$SECRET'");
+    config_with_env.env = Some(HashMap::from([("SECRET".to_string(), "xyz".to_string())]));
+
+    let config_without_env = test_config("sh -c 'echo SECRET=$SECRET'");
+
+    let mut configs = HashMap::new();
+    configs.insert("with-secret".to_string(), config_with_env);
+    configs.insert("without-secret".to_string(), config_without_env);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let with_log = paths.stdout_log("with-secret");
+    assert!(with_log.exists(), "with-secret stdout log should exist");
+    let with_content = std::fs::read_to_string(&with_log).unwrap();
+    assert!(
+        with_content.contains("SECRET=xyz"),
+        "with-secret log should contain 'SECRET=xyz', got: {with_content}"
+    );
+
+    let without_log = paths.stdout_log("without-secret");
+    assert!(
+        without_log.exists(),
+        "without-secret stdout log should exist"
+    );
+    let without_content = std::fs::read_to_string(&without_log).unwrap();
+    assert!(
+        !without_content.contains("xyz"),
+        "without-secret log should NOT contain 'xyz', got: {without_content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
