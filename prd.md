@@ -389,7 +389,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Unit: uptime comparison logic
 
 ### Phase 3 — Environment and config
-22. Environment variables — pass `env` from config to child process
+22. ~~Environment variables — pass `env` from config to child process~~ ✅
     - Integration: set `env = { FOO = "bar" }`, spawn process that prints `$FOO`, verify output
     - Integration: multiple env vars passed correctly
     - Integration: env vars don't leak between processes
