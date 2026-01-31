@@ -1,4 +1,4 @@
-use pm3::config::{self, ProcessConfig, RestartPolicy};
+use pm3::config::{self, EnvFile, ProcessConfig, RestartPolicy};
 use pm3::daemon;
 use pm3::log::LOG_ROTATION_SIZE;
 use pm3::paths::Paths;
@@ -2471,6 +2471,200 @@ async fn test_env_vars_dont_leak_between_processes() {
     assert!(
         !without_content.contains("xyz"),
         "without-secret log should NOT contain 'xyz', got: {without_content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+// ---------------------------------------------------------------------------
+// Env file support (step 23)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_env_file_values_available_in_child() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let workdir = dir.path().join("workdir");
+    std::fs::create_dir_all(&workdir).unwrap();
+    std::fs::write(workdir.join(".env"), "MY_VAR=from_env_file\n").unwrap();
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'echo $MY_VAR'");
+    config.cwd = Some(workdir.to_str().unwrap().to_string());
+    config.env_file = Some(EnvFile::Single(".env".to_string()));
+
+    let mut configs = HashMap::new();
+    configs.insert("env-file-test".to_string(), config);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stdout_log = paths.stdout_log("env-file-test");
+    assert!(stdout_log.exists(), "stdout log file should exist");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("from_env_file"),
+        "stdout should contain 'from_env_file', got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_inline_env_overrides_env_file() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let workdir = dir.path().join("workdir");
+    std::fs::create_dir_all(&workdir).unwrap();
+    std::fs::write(workdir.join(".env"), "MY_VAR=from_file\n").unwrap();
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'echo $MY_VAR'");
+    config.cwd = Some(workdir.to_str().unwrap().to_string());
+    config.env_file = Some(EnvFile::Single(".env".to_string()));
+    config.env = Some(HashMap::from([(
+        "MY_VAR".to_string(),
+        "from_inline".to_string(),
+    )]));
+
+    let mut configs = HashMap::new();
+    configs.insert("env-override".to_string(), config);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stdout_log = paths.stdout_log("env-override");
+    assert!(stdout_log.exists(), "stdout log file should exist");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("from_inline"),
+        "inline env should override env_file, got: {content}"
+    );
+    assert!(
+        !content.contains("from_file"),
+        "env_file value should NOT appear, got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_missing_env_file_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let workdir = dir.path().join("workdir");
+    std::fs::create_dir_all(&workdir).unwrap();
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sleep 999");
+    config.cwd = Some(workdir.to_str().unwrap().to_string());
+    config.env_file = Some(EnvFile::Single("nonexistent.env".to_string()));
+
+    let mut configs = HashMap::new();
+    configs.insert("missing-env-file".to_string(), config);
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("env file"),
+                "error should mention 'env file', got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_env_file_array_loads_multiple_files() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let workdir = dir.path().join("workdir");
+    std::fs::create_dir_all(&workdir).unwrap();
+    std::fs::write(workdir.join(".env"), "VAR_A=alpha\n").unwrap();
+    std::fs::write(workdir.join(".env.local"), "VAR_B=beta\n").unwrap();
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sh -c 'echo A=$VAR_A B=$VAR_B'");
+    config.cwd = Some(workdir.to_str().unwrap().to_string());
+    config.env_file = Some(EnvFile::Multiple(vec![
+        ".env".to_string(),
+        ".env.local".to_string(),
+    ]));
+
+    let mut configs = HashMap::new();
+    configs.insert("multi-env-file".to_string(), config);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stdout_log = paths.stdout_log("multi-env-file");
+    assert!(stdout_log.exists(), "stdout log file should exist");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("A=alpha"),
+        "stdout should contain 'A=alpha', got: {content}"
+    );
+    assert!(
+        content.contains("B=beta"),
+        "stdout should contain 'B=beta', got: {content}"
     );
 
     send_raw_request(&paths, &Request::Kill).await;

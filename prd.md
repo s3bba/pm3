@@ -394,7 +394,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Integration: multiple env vars passed correctly
     - Integration: env vars don't leak between processes
 
-23. Env file support — load `.env` files
+23. ~~Env file support — load `.env` files~~ ✅
     - Unit: parse `.env` file: `KEY=VALUE`, comments, blank lines, quoted values
     - Unit: `env_file` as string and as array both work
     - Integration: env file values are available in the child process

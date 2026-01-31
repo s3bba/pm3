@@ -16,6 +16,15 @@ pub enum EnvFile {
     Multiple(Vec<String>),
 }
 
+impl EnvFile {
+    pub fn paths(&self) -> Vec<&str> {
+        match self {
+            EnvFile::Single(p) => vec![p.as_str()],
+            EnvFile::Multiple(ps) => ps.iter().map(|s| s.as_str()).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Watch {

@@ -35,6 +35,8 @@ pub enum ProcessError {
     NotFound(String),
     #[error("invalid signal: {0}")]
     InvalidSignal(String),
+    #[error("env file error: {0}")]
+    EnvFile(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +169,26 @@ pub async fn spawn_process(
 
     if let Some(ref cwd) = config.cwd {
         cmd.current_dir(cwd);
+    }
+
+    if let Some(ref env_file) = config.env_file {
+        let mut env_file_vars = HashMap::new();
+        for file_path in env_file.paths() {
+            let path = std::path::Path::new(file_path);
+            let resolved = if path.is_relative() {
+                if let Some(ref cwd) = config.cwd {
+                    std::path::PathBuf::from(cwd).join(path)
+                } else {
+                    path.to_path_buf()
+                }
+            } else {
+                path.to_path_buf()
+            };
+            let vars = crate::env_file::load_env_file(&resolved)
+                .map_err(|e| ProcessError::EnvFile(e.to_string()))?;
+            env_file_vars.extend(vars);
+        }
+        cmd.envs(&env_file_vars);
     }
 
     if let Some(ref env_vars) = config.env {
