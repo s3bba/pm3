@@ -3,6 +3,7 @@ pub mod client;
 pub mod config;
 pub mod daemon;
 pub mod env_file;
+pub mod health;
 pub mod log;
 pub mod paths;
 pub mod pid;

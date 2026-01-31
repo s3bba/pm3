@@ -1,4 +1,5 @@
 use crate::config::ProcessConfig;
+use crate::health;
 use crate::log;
 use crate::paths::Paths;
 use crate::pid;
@@ -12,6 +13,15 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::RwLock;
 use tokio::sync::watch;
+
+type ChildToMonitor = (
+    String,
+    tokio::process::Child,
+    Option<u32>,
+    watch::Receiver<bool>,
+    Option<String>,
+    Option<watch::Receiver<bool>>,
+);
 
 pub async fn run(paths: Paths) -> color_eyre::Result<()> {
     fs::create_dir_all(paths.data_dir()).await?;
@@ -224,7 +234,7 @@ async fn handle_start(
     }
 
     let mut started = Vec::new();
-    let mut children_to_monitor = Vec::new();
+    let mut children_to_monitor: Vec<ChildToMonitor> = Vec::new();
 
     {
         let mut table = processes.write().await;
@@ -234,6 +244,7 @@ async fn handle_start(
                 continue;
             }
 
+            let health_check = config.health_check.clone();
             match process::spawn_process(name.clone(), config, paths).await {
                 Ok((managed, child)) => {
                     let pid = managed.pid;
@@ -242,8 +253,22 @@ async fn handle_start(
                         .as_ref()
                         .map(|tx| tx.subscribe())
                         .unwrap();
+                    let health_shutdown_rx = health_check.as_ref().map(|_| {
+                        managed
+                            .monitor_shutdown
+                            .as_ref()
+                            .map(|tx| tx.subscribe())
+                            .unwrap()
+                    });
                     table.insert(name.clone(), managed);
-                    children_to_monitor.push((name.clone(), child, pid, shutdown_rx));
+                    children_to_monitor.push((
+                        name.clone(),
+                        child,
+                        pid,
+                        shutdown_rx,
+                        health_check,
+                        health_shutdown_rx,
+                    ));
                     started.push(name);
                 }
                 Err(e) => {
@@ -255,16 +280,19 @@ async fn handle_start(
         }
     }
 
-    // Spawn monitors outside the lock
-    for (name, child, pid, shutdown_rx) in children_to_monitor {
+    // Spawn monitors and health checkers outside the lock
+    for (name, child, pid, shutdown_rx, health_check, health_shutdown_rx) in children_to_monitor {
         process::spawn_monitor(
-            name,
+            name.clone(),
             child,
             pid,
             Arc::clone(processes),
             paths.clone(),
             shutdown_rx,
         );
+        if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
+            health::spawn_health_checker(name, hc, Arc::clone(processes), hc_rx);
+        }
     }
 
     if started.is_empty() {
@@ -323,7 +351,7 @@ async fn handle_restart(
     paths: &Paths,
 ) -> Response {
     let mut restarted = Vec::new();
-    let mut children_to_monitor = Vec::new();
+    let mut children_to_monitor: Vec<ChildToMonitor> = Vec::new();
 
     {
         let mut table = processes.write().await;
@@ -355,6 +383,7 @@ async fn handle_restart(
                 };
             }
 
+            let health_check = config.health_check.clone();
             match process::spawn_process(name.clone(), config, paths).await {
                 Ok((mut new_managed, child)) => {
                     new_managed.restarts = old_restarts + 1;
@@ -364,8 +393,22 @@ async fn handle_restart(
                         .as_ref()
                         .map(|tx| tx.subscribe())
                         .unwrap();
+                    let health_shutdown_rx = health_check.as_ref().map(|_| {
+                        new_managed
+                            .monitor_shutdown
+                            .as_ref()
+                            .map(|tx| tx.subscribe())
+                            .unwrap()
+                    });
                     table.insert(name.clone(), new_managed);
-                    children_to_monitor.push((name.clone(), child, pid, shutdown_rx));
+                    children_to_monitor.push((
+                        name.clone(),
+                        child,
+                        pid,
+                        shutdown_rx,
+                        health_check,
+                        health_shutdown_rx,
+                    ));
                     restarted.push(name.clone());
                 }
                 Err(e) => {
@@ -377,16 +420,19 @@ async fn handle_restart(
         }
     }
 
-    // Spawn monitors outside the lock
-    for (name, child, pid, shutdown_rx) in children_to_monitor {
+    // Spawn monitors and health checkers outside the lock
+    for (name, child, pid, shutdown_rx, health_check, health_shutdown_rx) in children_to_monitor {
         process::spawn_monitor(
-            name,
+            name.clone(),
             child,
             pid,
             Arc::clone(processes),
             paths.clone(),
             shutdown_rx,
         );
+        if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
+            health::spawn_health_checker(name, hc, Arc::clone(processes), hc_rx);
+        }
     }
 
     Response::Success {

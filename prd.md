@@ -413,7 +413,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Integration: all fields populated correctly
 
 ### Phase 4 — Health checks and dependencies
-26. Health checks — HTTP GET / TCP connect polling, status transitions
+26. ~~Health checks — HTTP GET / TCP connect polling, status transitions~~
     - Integration: start process with HTTP health check, status goes `starting` → `online`
     - Integration: health check URL returns non-200, status stays `starting` then → `unhealthy` after timeout
     - Integration: TCP health check connects successfully → `online`

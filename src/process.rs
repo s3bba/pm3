@@ -255,11 +255,17 @@ pub async fn spawn_process(
         );
     }
 
+    let status = if config.health_check.is_some() {
+        ProcessStatus::Starting
+    } else {
+        ProcessStatus::Online
+    };
+
     let managed = ManagedProcess {
         name,
         config,
         pid,
-        status: ProcessStatus::Online,
+        status,
         started_at: tokio::time::Instant::now(),
         restarts: 0,
         log_broadcaster: log_tx,
@@ -408,7 +414,7 @@ async fn handle_child_exit(
         return;
     }
 
-    match spawn_process(name.to_string(), config, paths).await {
+    match spawn_process(name.to_string(), config.clone(), paths).await {
         Ok((mut new_managed, new_child)) => {
             new_managed.restarts = restarts + 1;
             let new_pid = new_managed.pid;
@@ -417,6 +423,14 @@ async fn handle_child_exit(
                 .as_ref()
                 .map(|tx| tx.subscribe())
                 .unwrap();
+            let health_shutdown_rx = config.health_check.as_ref().map(|_| {
+                new_managed
+                    .monitor_shutdown
+                    .as_ref()
+                    .map(|tx| tx.subscribe())
+                    .unwrap()
+            });
+            let health_check = config.health_check.clone();
 
             *managed = new_managed;
 
@@ -425,7 +439,17 @@ async fn handle_child_exit(
             let p = paths.clone();
             let n = name.to_string();
             drop(table);
-            spawn_monitor(n, new_child, new_pid, procs, p, shutdown_rx);
+            spawn_monitor(
+                n.clone(),
+                new_child,
+                new_pid,
+                Arc::clone(&procs),
+                p,
+                shutdown_rx,
+            );
+            if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
+                crate::health::spawn_health_checker(n, hc, procs, hc_rx);
+            }
         }
         Err(e) => {
             eprintln!("failed to restart '{name}': {e}");
