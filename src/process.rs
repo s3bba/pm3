@@ -37,6 +37,8 @@ pub enum ProcessError {
     InvalidSignal(String),
     #[error("env file error: {0}")]
     EnvFile(String),
+    #[error("hook failed: {0}")]
+    HookFailed(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +70,51 @@ pub fn parse_signal(name: &str) -> Result<nix::sys::signal::Signal, ProcessError
     };
     nix::sys::signal::Signal::from_str(&normalized)
         .map_err(|_| ProcessError::InvalidSignal(name.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle hooks
+// ---------------------------------------------------------------------------
+
+pub async fn run_hook(
+    hook: &str,
+    name: &str,
+    cwd: Option<&str>,
+    paths: &Paths,
+) -> Result<(), ProcessError> {
+    fs::create_dir_all(paths.log_dir()).await?;
+
+    let stdout_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(paths.stdout_log(name))
+        .map_err(ProcessError::SpawnFailed)?;
+    let stderr_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(paths.stderr_log(name))
+        .map_err(ProcessError::SpawnFailed)?;
+
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(hook);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(stdout_file);
+    cmd.stderr(stderr_file);
+
+    let status = cmd.status().await.map_err(ProcessError::SpawnFailed)?;
+
+    if !status.success() {
+        return Err(ProcessError::HookFailed(format!(
+            "pre_start '{}' exited with code {}",
+            hook,
+            status.code().unwrap_or(-1)
+        )));
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +228,10 @@ pub async fn spawn_process(
     config: ProcessConfig,
     paths: &Paths,
 ) -> Result<(ManagedProcess, Child), ProcessError> {
+    if let Some(ref hook) = config.pre_start {
+        run_hook(hook, &name, config.cwd.as_deref(), paths).await?;
+    }
+
     let (program, args) = parse_command(&config.command)?;
 
     fs::create_dir_all(paths.log_dir()).await?;

@@ -57,8 +57,11 @@ pub async fn run(paths: Paths) -> color_eyre::Result<()> {
     // Gracefully stop all managed processes before cleanup
     {
         let mut table = processes.write().await;
-        for (_, managed) in table.iter_mut() {
+        for (name, managed) in table.iter_mut() {
             let _ = managed.graceful_stop().await;
+            if let Some(ref hook) = managed.config.post_stop {
+                let _ = process::run_hook(hook, name, managed.config.cwd.as_deref(), &paths).await;
+            }
         }
     }
 
@@ -169,7 +172,7 @@ async fn dispatch(
             let infos: Vec<_> = table.values().map(|m| m.to_process_info()).collect();
             Response::ProcessList { processes: infos }
         }
-        Request::Stop { names } => handle_stop(names, processes).await,
+        Request::Stop { names } => handle_stop(names, processes, paths).await,
         Request::Restart { names } => handle_restart(names, processes, paths).await,
         Request::Kill => {
             let _ = shutdown_tx.send(true);
@@ -448,6 +451,7 @@ async fn wait_for_online(
 async fn handle_stop(
     names: Option<Vec<String>>,
     processes: &Arc<RwLock<ProcessTable>>,
+    paths: &Paths,
 ) -> Response {
     let mut table = processes.write().await;
 
@@ -488,6 +492,9 @@ async fn handle_stop(
             return Response::Error {
                 message: format!("failed to stop '{}': {}", name, e),
             };
+        }
+        if let Some(ref hook) = managed.config.post_stop {
+            let _ = process::run_hook(hook, name, managed.config.cwd.as_deref(), paths).await;
         }
         stopped.push(name.clone());
     }
@@ -549,6 +556,9 @@ async fn handle_restart(
                 return Response::Error {
                     message: format!("failed to stop '{}': {}", name, e),
                 };
+            }
+            if let Some(ref hook) = managed.config.post_stop {
+                let _ = process::run_hook(hook, name, managed.config.cwd.as_deref(), paths).await;
             }
         }
     }

@@ -441,11 +441,11 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~E2E: `pm3 signal nonexistent SIGHUP` errors~~
     - ~~Unit: signal name parsing (SIGHUP, SIGUSR1, SIGUSR2, etc.)~~
 
-30. Lifecycle hooks — `pre_start`, `post_stop`
-    - Integration: `pre_start = "echo before"` runs before process starts, output in logs
-    - Integration: `pre_start` fails (exit 1) → process does NOT start
-    - Integration: `post_stop = "echo after"` runs after process stops
-    - Integration: on restart, sequence is `post_stop` → `pre_start` → start
+~~30. Lifecycle hooks — `pre_start`, `post_stop`~~
+    - ~~Integration: `pre_start = "echo before"` runs before process starts, output in logs~~
+    - ~~Integration: `pre_start` fails (exit 1) → process does NOT start~~
+    - ~~Integration: `post_stop = "echo after"` runs after process stops~~
+    - ~~Integration: on restart, sequence is `post_stop` → `pre_start` → start~~
 
 31. Zero-downtime reload — `pm3 reload`, spawn new before killing old
     - Integration: reload spawns new process, waits for health check, then kills old

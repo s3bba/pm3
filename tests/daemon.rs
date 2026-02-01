@@ -3512,3 +3512,193 @@ async fn test_signal_stopped_process_returns_error() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ---------------------------------------------------------------------------
+// Lifecycle hooks (PRD item 30)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pre_start_runs_before_process() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sleep 999");
+    config.pre_start = Some("echo pre_start_marker".to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("hooky".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let stdout_log = paths.stdout_log("hooky");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("pre_start_marker"),
+        "stdout log should contain pre_start_marker, got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pre_start_failure_prevents_start() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sleep 999");
+    config.pre_start = Some("exit 1".to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("failhook".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("hook failed"),
+                "error should mention hook failed, got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    // Verify process is NOT in the list
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match list_resp {
+        Response::ProcessList { processes } => {
+            assert!(
+                !processes.iter().any(|p| p.name == "failhook"),
+                "failhook should not be in process list"
+            );
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_post_stop_runs_after_stop() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    let marker_path = dir.path().join("post_stop_marker");
+    let mut config = test_config("sleep 999");
+    config.post_stop = Some(format!("touch {}", marker_path.display()));
+
+    let mut configs = HashMap::new();
+    configs.insert("stophook".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Stop the process
+    let stop_resp = send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["stophook".to_string()]),
+        },
+    )
+    .await;
+    assert!(matches!(stop_resp, Response::Success { .. }));
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    assert!(
+        marker_path.exists(),
+        "post_stop marker file should exist at {}",
+        marker_path.display()
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_restart_runs_post_stop_then_pre_start() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    let order_file = dir.path().join("hook_order.txt");
+    let mut config = test_config("sleep 999");
+    config.post_stop = Some(format!("echo post_stop >> {}", order_file.display()));
+    config.pre_start = Some(format!("echo pre_start >> {}", order_file.display()));
+
+    let mut configs = HashMap::new();
+    configs.insert("orderhook".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Clear the order file (pre_start from initial start wrote to it)
+    std::fs::write(&order_file, "").unwrap();
+
+    // Restart the process
+    let restart_resp = send_raw_request(
+        &paths,
+        &Request::Restart {
+            names: Some(vec!["orderhook".to_string()]),
+        },
+    )
+    .await;
+    assert!(matches!(restart_resp, Response::Success { .. }));
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let content = std::fs::read_to_string(&order_file).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(
+        lines,
+        vec!["post_stop", "pre_start"],
+        "hooks should run in order: post_stop then pre_start, got: {:?}",
+        lines
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
