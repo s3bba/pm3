@@ -428,7 +428,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~Integration: `web` depends on `db` → `db` starts first, `web` waits until `db` is `online`~~
     - ~~Integration: stop with dependencies → dependents stopped first (reverse order)~~
 
-28. Process groups — `group` field, resolve group names in commands
+~~28. Process groups — `group` field, resolve group names in commands~~
     - Integration: `pm3 start backend` starts all processes with `group = "backend"`
     - Integration: `pm3 stop backend` stops the group
     - E2E: `pm3 list` shows group column

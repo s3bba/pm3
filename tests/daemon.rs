@@ -3093,3 +3093,236 @@ async fn test_missing_dependency_error() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ---------------------------------------------------------------------------
+// Process groups (step 28)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_group_start_by_group_name() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut api_config = test_config("sleep 999");
+    api_config.group = Some("backend".to_string());
+
+    let mut worker_config = test_config("sleep 999");
+    worker_config.group = Some("backend".to_string());
+
+    let frontend_config = test_config("sleep 999");
+
+    let mut configs = HashMap::new();
+    configs.insert("api".to_string(), api_config);
+    configs.insert("worker".to_string(), worker_config);
+    configs.insert("frontend".to_string(), frontend_config);
+
+    // Start only the "backend" group
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: Some(vec!["backend".to_string()]),
+            env: None,
+        },
+    )
+    .await;
+
+    match &resp {
+        Response::Success { message } => {
+            let msg = message.as_deref().unwrap_or("");
+            assert!(
+                msg.contains("api") && msg.contains("worker"),
+                "should start both backend processes, got: {msg}"
+            );
+            assert!(
+                !msg.contains("frontend"),
+                "should NOT start frontend, got: {msg}"
+            );
+        }
+        other => panic!("expected Success, got: {other:?}"),
+    }
+
+    // List should only have the two backend processes
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 2, "should have 2 processes started");
+            let names: Vec<&str> = processes.iter().map(|p| p.name.as_str()).collect();
+            assert!(names.contains(&"api"), "api should be running");
+            assert!(names.contains(&"worker"), "worker should be running");
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_group_stop_by_group_name() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut api_config = test_config("sleep 999");
+    api_config.group = Some("backend".to_string());
+
+    let mut worker_config = test_config("sleep 999");
+    worker_config.group = Some("backend".to_string());
+
+    let frontend_config = test_config("sleep 999");
+
+    let mut configs = HashMap::new();
+    configs.insert("api".to_string(), api_config);
+    configs.insert("worker".to_string(), worker_config);
+    configs.insert("frontend".to_string(), frontend_config);
+
+    // Start all
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Stop only the "backend" group
+    let stop_resp = send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["backend".to_string()]),
+        },
+    )
+    .await;
+
+    match &stop_resp {
+        Response::Success { message } => {
+            let msg = message.as_deref().unwrap_or("");
+            assert!(
+                msg.contains("api") && msg.contains("worker"),
+                "should stop both backend processes, got: {msg}"
+            );
+        }
+        other => panic!("expected Success, got: {other:?}"),
+    }
+
+    // Verify: api and worker stopped, frontend still online
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            let api = processes.iter().find(|p| p.name == "api").unwrap();
+            assert_eq!(api.status, ProcessStatus::Stopped, "api should be stopped");
+
+            let worker = processes.iter().find(|p| p.name == "worker").unwrap();
+            assert_eq!(
+                worker.status,
+                ProcessStatus::Stopped,
+                "worker should be stopped"
+            );
+
+            let frontend = processes.iter().find(|p| p.name == "frontend").unwrap();
+            assert_eq!(
+                frontend.status,
+                ProcessStatus::Online,
+                "frontend should still be online"
+            );
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_process_name_takes_priority_over_group() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    // Process named "backend" and another process with group = "backend"
+    let backend_process = test_config("sleep 999");
+
+    let mut grouped = test_config("sleep 999");
+    grouped.group = Some("backend".to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("backend".to_string(), backend_process);
+    configs.insert("api".to_string(), grouped);
+
+    // Start "backend" — should start only the process named "backend",
+    // NOT the "api" process that has group = "backend"
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: Some(vec!["backend".to_string()]),
+            env: None,
+        },
+    )
+    .await;
+
+    match &resp {
+        Response::Success { message } => {
+            let msg = message.as_deref().unwrap_or("");
+            assert!(msg.contains("backend"), "should start backend, got: {msg}");
+            assert!(!msg.contains("api"), "should NOT start api, got: {msg}");
+        }
+        other => panic!("expected Success, got: {other:?}"),
+    }
+
+    // Only the "backend" process should be running
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 1, "should have 1 process started");
+            assert_eq!(processes[0].name, "backend");
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_group_not_found_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), test_config("sleep 999"));
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: Some(vec!["nonexistent-group".to_string()]),
+            env: None,
+        },
+    )
+    .await;
+
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not found"),
+                "error should contain 'not found', got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}

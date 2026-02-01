@@ -133,12 +133,14 @@ fn print_response(response: &Response) {
                 table.load_preset(UTF8_FULL_CONDENSED);
                 table.set_header(vec![
                     Cell::new("name").add_attribute(Attribute::Bold),
+                    Cell::new("group").add_attribute(Attribute::Bold),
                     Cell::new("pid").add_attribute(Attribute::Bold),
                     Cell::new("status").add_attribute(Attribute::Bold),
                     Cell::new("uptime").add_attribute(Attribute::Bold),
                     Cell::new("restarts").add_attribute(Attribute::Bold),
                 ]);
                 for p in processes {
+                    let group = p.group.as_deref().unwrap_or("-");
                     let pid = p
                         .pid
                         .map(|id| id.to_string())
@@ -153,6 +155,7 @@ fn print_response(response: &Response) {
                     };
                     table.add_row(vec![
                         Cell::new(&p.name).fg(Color::Cyan),
+                        Cell::new(group).fg(Color::Magenta),
                         Cell::new(&pid),
                         Cell::new(&status).fg(status_color(&p.status)),
                         Cell::new(&uptime),

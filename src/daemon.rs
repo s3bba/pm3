@@ -191,6 +191,52 @@ async fn dispatch(
     }
 }
 
+/// Resolve names that may be process names or group names.
+/// Process names take priority over group names.
+fn resolve_config_names(
+    requested: &[String],
+    configs: &HashMap<String, ProcessConfig>,
+) -> Result<Vec<String>, String> {
+    let mut result = Vec::new();
+    for name in requested {
+        if configs.contains_key(name) {
+            result.push(name.clone());
+        } else {
+            let group_matches: Vec<String> = configs
+                .iter()
+                .filter(|(_, c)| c.group.as_deref() == Some(name))
+                .map(|(k, _)| k.clone())
+                .collect();
+            if group_matches.is_empty() {
+                return Err(format!("process or group '{}' not found in configs", name));
+            }
+            result.extend(group_matches);
+        }
+    }
+    Ok(result)
+}
+
+/// Resolve names against running process table — process names take priority over group names.
+fn resolve_table_names(requested: &[String], table: &ProcessTable) -> Result<Vec<String>, String> {
+    let mut result = Vec::new();
+    for name in requested {
+        if table.contains_key(name) {
+            result.push(name.clone());
+        } else {
+            let group_matches: Vec<String> = table
+                .iter()
+                .filter(|(_, m)| m.config.group.as_deref() == Some(name))
+                .map(|(k, _)| k.clone())
+                .collect();
+            if group_matches.is_empty() {
+                return Err(format!("process or group not found: {name}"));
+            }
+            result.extend(group_matches);
+        }
+    }
+    Ok(result)
+}
+
 const DEP_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 const DEP_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -203,18 +249,17 @@ async fn handle_start(
 ) -> Response {
     let mut to_start: Vec<(String, ProcessConfig)> = match names {
         Some(ref requested) => {
-            let mut selected = Vec::new();
-            for name in requested {
-                match configs.get(name) {
-                    Some(config) => selected.push((name.clone(), config.clone())),
-                    None => {
-                        return Response::Error {
-                            message: format!("process '{}' not found in configs", name),
-                        };
-                    }
-                }
-            }
-            selected
+            let resolved = match resolve_config_names(requested, &configs) {
+                Ok(r) => r,
+                Err(msg) => return Response::Error { message: msg },
+            };
+            resolved
+                .into_iter()
+                .map(|name| {
+                    let config = configs.get(&name).unwrap().clone();
+                    (name, config)
+                })
+                .collect()
         }
         None => configs.into_iter().collect(),
     };
@@ -406,16 +451,10 @@ async fn handle_stop(
     let mut table = processes.write().await;
 
     let targets: Vec<String> = match names {
-        Some(ref requested) => {
-            for name in requested {
-                if !table.contains_key(name) {
-                    return Response::Error {
-                        message: format!("process not found: {name}"),
-                    };
-                }
-            }
-            requested.clone()
-        }
+        Some(ref requested) => match resolve_table_names(requested, &table) {
+            Ok(r) => r,
+            Err(msg) => return Response::Error { message: msg },
+        },
         None => table.keys().cloned().collect(),
     };
 
@@ -467,16 +506,10 @@ async fn handle_restart(
         let table = processes.read().await;
 
         let targets: Vec<String> = match names {
-            Some(ref requested) => {
-                for name in requested {
-                    if !table.contains_key(name) {
-                        return Response::Error {
-                            message: format!("process not found: {name}"),
-                        };
-                    }
-                }
-                requested.clone()
-            }
+            Some(ref requested) => match resolve_table_names(requested, &table) {
+                Ok(r) => r,
+                Err(msg) => return Response::Error { message: msg },
+            },
             None => table.keys().cloned().collect(),
         };
 

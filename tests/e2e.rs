@@ -1046,3 +1046,60 @@ depends_on = ["db"]
 
     kill_daemon(&data_dir, work_dir);
 }
+
+// ---------------------------------------------------------------------------
+// Process groups (step 28)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_e2e_list_shows_group_column() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[api]
+command = "sleep 999"
+group = "backend"
+
+[worker]
+command = "sleep 999"
+group = "backend"
+
+[frontend]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    // Human-readable list should contain "group" header and group values
+    let output = pm3(&data_dir, work_dir).arg("list").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("group"),
+        "list output should contain 'group' header, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("backend"),
+        "list output should contain 'backend' group, got: {stdout}"
+    );
+
+    // JSON list should have group field
+    let processes = get_process_list(&data_dir, work_dir);
+    let api = processes.iter().find(|p| p.name == "api").unwrap();
+    assert_eq!(
+        api.group.as_deref(),
+        Some("backend"),
+        "api should have group 'backend'"
+    );
+
+    let frontend = processes.iter().find(|p| p.name == "frontend").unwrap();
+    assert_eq!(frontend.group, None, "frontend should have no group");
+
+    kill_daemon(&data_dir, work_dir);
+}
