@@ -178,6 +178,7 @@ async fn dispatch(
             }
         }
         Request::Info { name } => handle_info(name, processes, paths).await,
+        Request::Signal { name, signal } => handle_signal(name, signal, processes).await,
         Request::Flush { names } => handle_flush(names, processes, paths).await,
         Request::Log { .. } => {
             // Handled in handle_connection directly
@@ -727,6 +728,51 @@ async fn handle_info(
         None => Response::Error {
             message: format!("process not found: {name}"),
         },
+    }
+}
+
+async fn handle_signal(
+    name: String,
+    signal: String,
+    processes: &Arc<RwLock<ProcessTable>>,
+) -> Response {
+    let table = processes.read().await;
+    let managed = match table.get(&name) {
+        Some(m) => m,
+        None => {
+            return Response::Error {
+                message: format!("process not found: {name}"),
+            };
+        }
+    };
+
+    let raw_pid = match managed.pid {
+        Some(pid) => pid,
+        None => {
+            return Response::Error {
+                message: format!("process '{name}' is not running"),
+            };
+        }
+    };
+
+    let sig = match process::parse_signal(&signal) {
+        Ok(s) => s,
+        Err(e) => {
+            return Response::Error {
+                message: e.to_string(),
+            };
+        }
+    };
+
+    let pid = nix::unistd::Pid::from_raw(raw_pid as i32);
+    if let Err(e) = nix::sys::signal::kill(pid, sig) {
+        return Response::Error {
+            message: format!("failed to send signal to '{}': {}", name, e),
+        };
+    }
+
+    Response::Success {
+        message: Some(format!("sent {} to '{}'", signal, name)),
     }
 }
 

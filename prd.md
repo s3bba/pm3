@@ -435,11 +435,11 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Unit: group name resolution — process name takes priority over group name if conflict
 
 ### Phase 5 — Lifecycle and signals
-29. Signal command — `pm3 signal <name> <sig>`
-    - Integration: send SIGUSR1 to a process, verify it received the signal
-    - E2E: `pm3 signal web SIGHUP` succeeds
-    - E2E: `pm3 signal nonexistent SIGHUP` errors
-    - Unit: signal name parsing (SIGHUP, SIGUSR1, SIGUSR2, etc.)
+~~29. Signal command — `pm3 signal <name> <sig>`~~
+    - ~~Integration: send SIGUSR1 to a process, verify it received the signal~~
+    - ~~E2E: `pm3 signal web SIGHUP` succeeds~~
+    - ~~E2E: `pm3 signal nonexistent SIGHUP` errors~~
+    - ~~Unit: signal name parsing (SIGHUP, SIGUSR1, SIGUSR2, etc.)~~
 
 30. Lifecycle hooks — `pre_start`, `post_stop`
     - Integration: `pre_start = "echo before"` runs before process starts, output in logs

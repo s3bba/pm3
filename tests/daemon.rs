@@ -3326,3 +3326,189 @@ async fn test_group_not_found_returns_error() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ---------------------------------------------------------------------------
+// Signal command (step 29)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_signal_sends_to_process() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let marker = dir.path().join("sigusr1_received");
+    let cmd = format!(
+        "sh -c 'trap \"touch {}\" USR1; while true; do sleep 0.1; done'",
+        marker.display()
+    );
+    let mut config = test_config(&cmd);
+    config.restart = Some(RestartPolicy::Never);
+
+    let mut configs = HashMap::new();
+    configs.insert("trapper".to_string(), config);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Signal {
+            name: "trapper".to_string(),
+            signal: "SIGUSR1".to_string(),
+        },
+    )
+    .await;
+    match &resp {
+        Response::Success { message } => {
+            let msg = message.as_deref().unwrap_or("");
+            assert!(msg.contains("sent"), "should contain 'sent', got: {msg}");
+        }
+        other => panic!("expected Success, got: {other:?}"),
+    }
+
+    // Wait for trap handler to execute
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        marker.exists(),
+        "marker file should exist after SIGUSR1 trap fired"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_signal_nonexistent_process_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Signal {
+            name: "nonexistent".to_string(),
+            signal: "SIGHUP".to_string(),
+        },
+    )
+    .await;
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not found"),
+                "error should contain 'not found', got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_signal_invalid_signal_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), test_config("sleep 999"));
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Signal {
+            name: "web".to_string(),
+            signal: "SIGFAKE".to_string(),
+        },
+    )
+    .await;
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("invalid signal"),
+                "error should contain 'invalid signal', got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_signal_stopped_process_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), test_config("sleep 999"));
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Stop the process first
+    send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["web".to_string()]),
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Signal {
+            name: "web".to_string(),
+            signal: "SIGUSR1".to_string(),
+        },
+    )
+    .await;
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not running"),
+                "error should contain 'not running', got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}

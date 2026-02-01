@@ -1103,3 +1103,68 @@ command = "sleep 999"
 
     kill_daemon(&data_dir, work_dir);
 }
+
+// ---------------------------------------------------------------------------
+// Signal command (step 29)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_e2e_signal_success() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    pm3(&data_dir, work_dir)
+        .args(["signal", "web", "SIGUSR1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sent"));
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
+fn test_e2e_signal_nonexistent_errors() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    let output = pm3(&data_dir, work_dir)
+        .args(["--json", "signal", "nonexistent", "SIGHUP"])
+        .output()
+        .unwrap();
+    let response = parse_json_response(&output);
+    match response {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not found"),
+                "error should contain 'not found', got: {message}"
+            );
+        }
+        other => panic!("expected Error response, got: {other:?}"),
+    }
+
+    kill_daemon(&data_dir, work_dir);
+}
