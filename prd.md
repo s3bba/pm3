@@ -421,12 +421,12 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Unit: parse `http://...` and `tcp://...` health check URLs
     - Integration: health check timeout (30s) triggers `unhealthy`
 
-27. Process dependencies — `depends_on`, topological sort, circular detection
-    - Unit: topological sort produces correct start order
-    - Unit: circular dependency detected and returns error
-    - Unit: missing dependency name returns error
-    - Integration: `web` depends on `db` → `db` starts first, `web` waits until `db` is `online`
-    - Integration: stop with dependencies → dependents stopped first (reverse order)
+~~27. Process dependencies — `depends_on`, topological sort, circular detection~~
+    - ~~Unit: topological sort produces correct start order~~
+    - ~~Unit: circular dependency detected and returns error~~
+    - ~~Unit: missing dependency name returns error~~
+    - ~~Integration: `web` depends on `db` → `db` starts first, `web` waits until `db` is `online`~~
+    - ~~Integration: stop with dependencies → dependents stopped first (reverse order)~~
 
 28. Process groups — `group` field, resolve group names in commands
     - Integration: `pm3 start backend` starts all processes with `group = "backend"`

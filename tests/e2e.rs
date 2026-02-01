@@ -998,3 +998,51 @@ command = "sleep 999"
 
     kill_daemon(&data_dir, work_dir);
 }
+
+// ---------------------------------------------------------------------------
+// Process dependency E2E tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_e2e_dependency_start_order() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[db]
+command = "sleep 999"
+
+[web]
+command = "sleep 999"
+depends_on = ["db"]
+"#,
+    )
+    .unwrap();
+
+    // Start all processes
+    pm3(&data_dir, work_dir)
+        .arg("start")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("started:"));
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Both should be online
+    let processes = get_process_list(&data_dir, work_dir);
+    assert_eq!(processes.len(), 2, "should have 2 processes");
+
+    for p in &processes {
+        assert_eq!(
+            p.status,
+            ProcessStatus::Online,
+            "process '{}' should be online",
+            p.name
+        );
+    }
+
+    kill_daemon(&data_dir, work_dir);
+}

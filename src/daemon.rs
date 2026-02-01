@@ -1,13 +1,15 @@
 use crate::config::ProcessConfig;
+use crate::deps;
 use crate::health;
 use crate::log;
 use crate::paths::Paths;
 use crate::pid;
 use crate::process::{self, ProcessTable};
-use crate::protocol::{self, Request, Response};
+use crate::protocol::{self, ProcessStatus, Request, Response};
 use color_eyre::eyre::bail;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -189,6 +191,9 @@ async fn dispatch(
     }
 }
 
+const DEP_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+const DEP_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
 async fn handle_start(
     configs: HashMap<String, ProcessConfig>,
     names: Option<Vec<String>>,
@@ -233,65 +238,105 @@ async fn handle_start(
         }
     }
 
+    // Build subset configs map for dependency analysis
+    let subset_configs: HashMap<String, ProcessConfig> = to_start.iter().cloned().collect();
+
+    // Validate dependencies
+    if let Err(e) = deps::validate_deps(&subset_configs) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+
+    // Get level-grouped start order
+    let levels = match deps::topological_levels(&subset_configs) {
+        Ok(l) => l,
+        Err(e) => {
+            return Response::Error {
+                message: e.to_string(),
+            };
+        }
+    };
+
     let mut started = Vec::new();
-    let mut children_to_monitor: Vec<ChildToMonitor> = Vec::new();
 
-    {
-        let mut table = processes.write().await;
+    for (level_idx, level) in levels.iter().enumerate() {
+        let mut children_to_monitor: Vec<ChildToMonitor> = Vec::new();
+        let level_names: Vec<String>;
 
-        for (name, config) in to_start {
-            if table.contains_key(&name) {
-                continue;
-            }
+        {
+            let mut table = processes.write().await;
+            let mut names_this_level = Vec::new();
 
-            let health_check = config.health_check.clone();
-            match process::spawn_process(name.clone(), config, paths).await {
-                Ok((managed, child)) => {
-                    let pid = managed.pid;
-                    let shutdown_rx = managed
-                        .monitor_shutdown
-                        .as_ref()
-                        .map(|tx| tx.subscribe())
-                        .unwrap();
-                    let health_shutdown_rx = health_check.as_ref().map(|_| {
-                        managed
+            for name in level {
+                if table.contains_key(name) {
+                    continue;
+                }
+
+                let config = subset_configs.get(name).unwrap().clone();
+                let health_check = config.health_check.clone();
+                match process::spawn_process(name.clone(), config, paths).await {
+                    Ok((managed, child)) => {
+                        let pid = managed.pid;
+                        let shutdown_rx = managed
                             .monitor_shutdown
                             .as_ref()
                             .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    table.insert(name.clone(), managed);
-                    children_to_monitor.push((
-                        name.clone(),
-                        child,
-                        pid,
-                        shutdown_rx,
-                        health_check,
-                        health_shutdown_rx,
-                    ));
-                    started.push(name);
-                }
-                Err(e) => {
-                    return Response::Error {
-                        message: format!("failed to start '{}': {}", name, e),
-                    };
+                            .unwrap();
+                        let health_shutdown_rx = health_check.as_ref().map(|_| {
+                            managed
+                                .monitor_shutdown
+                                .as_ref()
+                                .map(|tx| tx.subscribe())
+                                .unwrap()
+                        });
+                        table.insert(name.clone(), managed);
+                        children_to_monitor.push((
+                            name.clone(),
+                            child,
+                            pid,
+                            shutdown_rx,
+                            health_check,
+                            health_shutdown_rx,
+                        ));
+                        names_this_level.push(name.clone());
+                    }
+                    Err(e) => {
+                        return Response::Error {
+                            message: format!("failed to start '{}': {}", name, e),
+                        };
+                    }
                 }
             }
-        }
-    }
 
-    // Spawn monitors and health checkers outside the lock
-    for (name, child, pid, shutdown_rx, health_check, health_shutdown_rx) in children_to_monitor {
-        process::spawn_monitor(
-            name.clone(),
-            child,
-            pid,
-            Arc::clone(processes),
-            paths.clone(),
-            shutdown_rx,
-        );
-        if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-            health::spawn_health_checker(name, hc, Arc::clone(processes), hc_rx);
+            level_names = names_this_level;
+        }
+
+        // Spawn monitors and health checkers outside the lock
+        for (name, child, pid, shutdown_rx, health_check, health_shutdown_rx) in children_to_monitor
+        {
+            process::spawn_monitor(
+                name.clone(),
+                child,
+                pid,
+                Arc::clone(processes),
+                paths.clone(),
+                shutdown_rx,
+            );
+            if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
+                health::spawn_health_checker(name, hc, Arc::clone(processes), hc_rx);
+            }
+        }
+
+        started.extend(level_names.clone());
+
+        // Wait for this level to come online before starting the next level
+        let is_last_level = level_idx == levels.len() - 1;
+        if !is_last_level
+            && !level_names.is_empty()
+            && let Err(msg) = wait_for_online(&level_names, processes).await
+        {
+            return Response::Error { message: msg };
         }
     }
 
@@ -303,6 +348,54 @@ async fn handle_start(
         Response::Success {
             message: Some(format!("started: {}", started.join(", "))),
         }
+    }
+}
+
+/// Poll the process table until all named processes are Online, or timeout/failure.
+async fn wait_for_online(
+    names: &[String],
+    processes: &Arc<RwLock<ProcessTable>>,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + DEP_WAIT_TIMEOUT;
+
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!(
+                "timeout waiting for dependencies to come online: {}",
+                names.join(", ")
+            ));
+        }
+
+        {
+            let table = processes.read().await;
+            let mut all_online = true;
+            for name in names {
+                if let Some(managed) = table.get(name) {
+                    match managed.status {
+                        ProcessStatus::Online => {}
+                        ProcessStatus::Stopped | ProcessStatus::Errored => {
+                            return Err(format!(
+                                "dependency '{}' failed (status: {})",
+                                name, managed.status
+                            ));
+                        }
+                        ProcessStatus::Unhealthy => {
+                            return Err(format!("dependency '{}' is unhealthy", name));
+                        }
+                        ProcessStatus::Starting => {
+                            all_online = false;
+                        }
+                    }
+                } else {
+                    return Err(format!("dependency '{}' not found in process table", name));
+                }
+            }
+            if all_online {
+                return Ok(());
+            }
+        }
+
+        tokio::time::sleep(DEP_POLL_INTERVAL).await;
     }
 }
 
@@ -326,10 +419,29 @@ async fn handle_stop(
         None => table.keys().cloned().collect(),
     };
 
+    // Build configs map from running processes for dependency analysis
+    let running_configs: HashMap<String, ProcessConfig> = table
+        .iter()
+        .map(|(k, v)| (k.clone(), v.config.clone()))
+        .collect();
+
+    // Expand targets to include transitive dependents and order for stop
+    let stop_order = match deps::expand_dependents(&targets, &running_configs) {
+        Ok(order) => order,
+        Err(e) => {
+            return Response::Error {
+                message: e.to_string(),
+            };
+        }
+    };
+
     let mut stopped = Vec::new();
-    for name in &targets {
-        let managed = table.get_mut(name).unwrap();
-        if managed.status == protocol::ProcessStatus::Stopped {
+    for name in &stop_order {
+        let managed = match table.get_mut(name) {
+            Some(m) => m,
+            None => continue,
+        };
+        if managed.status == ProcessStatus::Stopped {
             continue;
         }
         if let Err(e) = managed.graceful_stop().await {
@@ -350,11 +462,9 @@ async fn handle_restart(
     processes: &Arc<RwLock<ProcessTable>>,
     paths: &Paths,
 ) -> Response {
-    let mut restarted = Vec::new();
-    let mut children_to_monitor: Vec<ChildToMonitor> = Vec::new();
-
-    {
-        let mut table = processes.write().await;
+    // Collect targets and configs under a single lock scope
+    let (targets, restart_configs) = {
+        let table = processes.read().await;
 
         let targets: Vec<String> = match names {
             Some(ref requested) => {
@@ -370,68 +480,141 @@ async fn handle_restart(
             None => table.keys().cloned().collect(),
         };
 
-        for name in &targets {
-            let managed = table.get_mut(name).unwrap();
-            let config = managed.config.clone();
-            let old_restarts = managed.restarts;
+        let running_configs: HashMap<String, ProcessConfig> = table
+            .iter()
+            .map(|(k, v)| (k.clone(), v.config.clone()))
+            .collect();
 
-            if managed.status != protocol::ProcessStatus::Stopped
+        (targets, running_configs)
+    };
+
+    // Compute stop order (reverse topo: dependents first)
+    let stop_order = match deps::expand_dependents(&targets, &restart_configs) {
+        Ok(order) => order,
+        Err(e) => {
+            return Response::Error {
+                message: e.to_string(),
+            };
+        }
+    };
+
+    // Stop phase: stop in reverse dependency order
+    let mut old_restarts_map: HashMap<String, u32> = HashMap::new();
+    {
+        let mut table = processes.write().await;
+        for name in &stop_order {
+            let managed = match table.get_mut(name) {
+                Some(m) => m,
+                None => continue,
+            };
+            old_restarts_map.insert(name.clone(), managed.restarts);
+
+            if managed.status != ProcessStatus::Stopped
                 && let Err(e) = managed.graceful_stop().await
             {
                 return Response::Error {
                     message: format!("failed to stop '{}': {}", name, e),
                 };
             }
-
-            let health_check = config.health_check.clone();
-            match process::spawn_process(name.clone(), config, paths).await {
-                Ok((mut new_managed, child)) => {
-                    new_managed.restarts = old_restarts + 1;
-                    let pid = new_managed.pid;
-                    let shutdown_rx = new_managed
-                        .monitor_shutdown
-                        .as_ref()
-                        .map(|tx| tx.subscribe())
-                        .unwrap();
-                    let health_shutdown_rx = health_check.as_ref().map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    table.insert(name.clone(), new_managed);
-                    children_to_monitor.push((
-                        name.clone(),
-                        child,
-                        pid,
-                        shutdown_rx,
-                        health_check,
-                        health_shutdown_rx,
-                    ));
-                    restarted.push(name.clone());
-                }
-                Err(e) => {
-                    return Response::Error {
-                        message: format!("failed to restart '{}': {}", name, e),
-                    };
-                }
-            }
         }
     }
 
-    // Spawn monitors and health checkers outside the lock
-    for (name, child, pid, shutdown_rx, health_check, health_shutdown_rx) in children_to_monitor {
-        process::spawn_monitor(
-            name.clone(),
-            child,
-            pid,
-            Arc::clone(processes),
-            paths.clone(),
-            shutdown_rx,
-        );
-        if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-            health::spawn_health_checker(name, hc, Arc::clone(processes), hc_rx);
+    // Build subset configs for the processes we're restarting
+    let subset_configs: HashMap<String, ProcessConfig> = restart_configs
+        .iter()
+        .filter(|(k, _)| stop_order.contains(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    // Get forward start order (topological levels)
+    let levels = match deps::topological_levels(&subset_configs) {
+        Ok(l) => l,
+        Err(e) => {
+            return Response::Error {
+                message: e.to_string(),
+            };
+        }
+    };
+
+    // Start phase: start in forward dependency order, level by level
+    let mut restarted = Vec::new();
+
+    for (level_idx, level) in levels.iter().enumerate() {
+        let mut children_to_monitor: Vec<ChildToMonitor> = Vec::new();
+        let mut level_names: Vec<String> = Vec::new();
+
+        {
+            let mut table = processes.write().await;
+
+            for name in level {
+                let config = match subset_configs.get(name) {
+                    Some(c) => c.clone(),
+                    None => continue,
+                };
+                let old_restarts = old_restarts_map.get(name).copied().unwrap_or(0);
+
+                let health_check = config.health_check.clone();
+                match process::spawn_process(name.clone(), config, paths).await {
+                    Ok((mut new_managed, child)) => {
+                        new_managed.restarts = old_restarts + 1;
+                        let pid = new_managed.pid;
+                        let shutdown_rx = new_managed
+                            .monitor_shutdown
+                            .as_ref()
+                            .map(|tx| tx.subscribe())
+                            .unwrap();
+                        let health_shutdown_rx = health_check.as_ref().map(|_| {
+                            new_managed
+                                .monitor_shutdown
+                                .as_ref()
+                                .map(|tx| tx.subscribe())
+                                .unwrap()
+                        });
+                        table.insert(name.clone(), new_managed);
+                        children_to_monitor.push((
+                            name.clone(),
+                            child,
+                            pid,
+                            shutdown_rx,
+                            health_check,
+                            health_shutdown_rx,
+                        ));
+                        level_names.push(name.clone());
+                    }
+                    Err(e) => {
+                        return Response::Error {
+                            message: format!("failed to restart '{}': {}", name, e),
+                        };
+                    }
+                }
+            }
+        }
+
+        // Spawn monitors and health checkers outside the lock
+        for (name, child, pid, shutdown_rx, health_check, health_shutdown_rx) in children_to_monitor
+        {
+            process::spawn_monitor(
+                name.clone(),
+                child,
+                pid,
+                Arc::clone(processes),
+                paths.clone(),
+                shutdown_rx,
+            );
+            if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
+                health::spawn_health_checker(name, hc, Arc::clone(processes), hc_rx);
+            }
+        }
+
+        restarted.extend(level_names.clone());
+
+        // Wait for this level to come online before starting the next level
+        let is_last_level = level_idx == levels.len() - 1;
+        if !is_last_level
+            && !level_names.is_empty()
+            && let Err(msg) = wait_for_online(&level_names, processes).await
+        {
+            return Response::Error { message: msg };
         }
     }
 

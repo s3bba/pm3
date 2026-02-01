@@ -2,6 +2,7 @@ pub mod cli;
 pub mod client;
 pub mod config;
 pub mod daemon;
+pub mod deps;
 pub mod env_file;
 pub mod health;
 pub mod log;

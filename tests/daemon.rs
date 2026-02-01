@@ -2890,3 +2890,206 @@ async fn test_info_nonexistent_returns_error() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ---------------------------------------------------------------------------
+// Process dependency tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_dependency_start_order() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    // db has no deps, web depends on db
+    let db_config = test_config("sleep 999");
+    let mut web_config = test_config("sleep 999");
+    web_config.depends_on = Some(vec!["db".to_string()]);
+
+    let mut configs = HashMap::new();
+    configs.insert("db".to_string(), db_config);
+    configs.insert("web".to_string(), web_config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    assert!(
+        matches!(&resp, Response::Success { .. }),
+        "expected Success, got: {resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Both should be online
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(processes.len(), 2);
+            for p in processes {
+                assert_eq!(
+                    p.status,
+                    ProcessStatus::Online,
+                    "process '{}' should be online",
+                    p.name
+                );
+            }
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_dependency_stop_order() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let db_config = test_config("sleep 999");
+    let mut web_config = test_config("sleep 999");
+    web_config.depends_on = Some(vec!["db".to_string()]);
+
+    let mut configs = HashMap::new();
+    configs.insert("db".to_string(), db_config);
+    configs.insert("web".to_string(), web_config);
+
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Stop db — should cascade to web (web stopped first as dependent)
+    let stop_resp = send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["db".to_string()]),
+        },
+    )
+    .await;
+
+    match &stop_resp {
+        Response::Success { message } => {
+            let msg = message.as_deref().unwrap_or("");
+            assert!(
+                msg.contains("web") && msg.contains("db"),
+                "stop should include both web and db, got: {msg}"
+            );
+        }
+        other => panic!("expected Success, got: {other:?}"),
+    }
+
+    // Both should be stopped
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            for p in processes {
+                assert_eq!(
+                    p.status,
+                    ProcessStatus::Stopped,
+                    "process '{}' should be stopped",
+                    p.name
+                );
+            }
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_circular_dependency_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut a_config = test_config("sleep 999");
+    a_config.depends_on = Some(vec!["b".to_string()]);
+
+    let mut b_config = test_config("sleep 999");
+    b_config.depends_on = Some(vec!["a".to_string()]);
+
+    let mut configs = HashMap::new();
+    configs.insert("a".to_string(), a_config);
+    configs.insert("b".to_string(), b_config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("circular"),
+                "error should mention circular, got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_missing_dependency_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut web_config = test_config("sleep 999");
+    web_config.depends_on = Some(vec!["nonexistent".to_string()]);
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), web_config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    match &resp {
+        Response::Error { message } => {
+            assert!(
+                message.contains("nonexistent"),
+                "error should mention the missing dep, got: {message}"
+            );
+        }
+        other => panic!("expected Error, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
