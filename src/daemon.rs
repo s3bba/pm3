@@ -189,6 +189,7 @@ async fn dispatch(
                 message: "unexpected dispatch for log".to_string(),
             }
         }
+        Request::Reload { names } => handle_reload(names, processes, paths).await,
         _ => Response::Error {
             message: "not implemented".to_string(),
         },
@@ -665,6 +666,161 @@ async fn handle_restart(
     Response::Success {
         message: Some(format!("restarted: {}", restarted.join(", "))),
     }
+}
+
+async fn handle_reload(
+    names: Option<Vec<String>>,
+    processes: &Arc<RwLock<ProcessTable>>,
+    paths: &Paths,
+) -> Response {
+    // Resolve targets from process table
+    let targets = {
+        let table = processes.read().await;
+        let targets: Vec<String> = match names {
+            Some(ref requested) => match resolve_table_names(requested, &table) {
+                Ok(r) => r,
+                Err(msg) => return Response::Error { message: msg },
+            },
+            None => table.keys().cloned().collect(),
+        };
+        targets
+    };
+
+    // Separate processes with and without health checks
+    let mut with_hc: Vec<(String, ProcessConfig, u32)> = Vec::new();
+    let mut without_hc: Vec<String> = Vec::new();
+
+    {
+        let table = processes.read().await;
+        for name in &targets {
+            if let Some(managed) = table.get(name) {
+                if managed.config.health_check.is_some() {
+                    with_hc.push((name.clone(), managed.config.clone(), managed.restarts));
+                } else {
+                    without_hc.push(name.clone());
+                }
+            }
+        }
+    }
+
+    let mut reloaded = Vec::new();
+    let mut failed = Vec::new();
+
+    // Handle processes WITH health checks: zero-downtime reload
+    for (name, config, old_restarts) in with_hc {
+        let temp_name = format!("__reload_{}", name);
+        let health_check = config.health_check.clone();
+
+        // Spawn new process under temporary name
+        match process::spawn_process(temp_name.clone(), config.clone(), paths).await {
+            Ok((mut new_managed, new_child)) => {
+                new_managed.restarts = old_restarts;
+                let new_pid = new_managed.pid;
+                let shutdown_rx = new_managed
+                    .monitor_shutdown
+                    .as_ref()
+                    .map(|tx| tx.subscribe())
+                    .unwrap();
+                let health_shutdown_rx = health_check.as_ref().map(|_| {
+                    new_managed
+                        .monitor_shutdown
+                        .as_ref()
+                        .map(|tx| tx.subscribe())
+                        .unwrap()
+                });
+
+                // Insert temp entry into process table
+                {
+                    let mut table = processes.write().await;
+                    table.insert(temp_name.clone(), new_managed);
+                }
+
+                // Spawn monitor for temp process
+                process::spawn_monitor(
+                    temp_name.clone(),
+                    new_child,
+                    new_pid,
+                    Arc::clone(processes),
+                    paths.clone(),
+                    shutdown_rx,
+                );
+
+                // Spawn health checker for temp process
+                if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
+                    health::spawn_health_checker(
+                        temp_name.clone(),
+                        hc,
+                        Arc::clone(processes),
+                        hc_rx,
+                    );
+                }
+
+                // Wait for new process to come online
+                match wait_for_online(std::slice::from_ref(&temp_name), processes).await {
+                    Ok(()) => {
+                        // New process is online — stop the old one and swap
+                        let mut table = processes.write().await;
+
+                        // Stop old process
+                        if let Some(old_managed) = table.get_mut(&name) {
+                            let _ = old_managed.graceful_stop().await;
+                            if let Some(ref hook) = config.post_stop {
+                                let _ =
+                                    process::run_hook(hook, &name, config.cwd.as_deref(), paths)
+                                        .await;
+                            }
+                        }
+
+                        // Move temp entry to original name
+                        if let Some(mut new_managed) = table.remove(&temp_name) {
+                            new_managed.name = name.clone();
+                            table.insert(name.clone(), new_managed);
+                        }
+
+                        reloaded.push(name);
+                    }
+                    Err(_) => {
+                        // New process failed health check — kill it and keep old one
+                        let mut table = processes.write().await;
+                        if let Some(temp_managed) = table.get_mut(&temp_name) {
+                            let _ = temp_managed.graceful_stop().await;
+                        }
+                        table.remove(&temp_name);
+                        failed.push(name);
+                    }
+                }
+            }
+            Err(e) => {
+                failed.push(format!("{} (spawn failed: {})", name, e));
+            }
+        }
+    }
+
+    // Handle processes WITHOUT health checks: fall back to restart
+    if !without_hc.is_empty() {
+        match handle_restart(Some(without_hc.clone()), processes, paths).await {
+            Response::Success { .. } => {
+                reloaded.extend(without_hc);
+            }
+            Response::Error { message } => {
+                return Response::Error { message };
+            }
+            _ => {}
+        }
+    }
+
+    if reloaded.is_empty() && !failed.is_empty() {
+        return Response::Error {
+            message: format!("reload failed: {}", failed.join(", ")),
+        };
+    }
+
+    let mut msg = format!("reloaded: {}", reloaded.join(", "));
+    if !failed.is_empty() {
+        msg.push_str(&format!(" (failed: {})", failed.join(", ")));
+    }
+
+    Response::Success { message: Some(msg) }
 }
 
 async fn handle_flush(

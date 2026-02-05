@@ -44,6 +44,22 @@ fn find_process_pid(processes: &[ProcessInfo], name: &str) -> u32 {
         .unwrap_or_else(|| panic!("process '{name}' has no pid"))
 }
 
+fn wait_until_online(data_dir: &Path, work_dir: &Path, name: &str, timeout_secs: u64) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        let processes = get_process_list(data_dir, work_dir);
+        if let Some(p) = processes.iter().find(|p| p.name == name) {
+            if p.status == ProcessStatus::Online {
+                return;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("timeout waiting for '{name}' to become online");
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
 #[test]
 fn test_e2e_stop_one_process_others_keep_running() {
     let dir = TempDir::new().unwrap();
@@ -906,6 +922,226 @@ command = "sh -c 'echo worker_output'"
             "{name} stdout log should be empty after flush"
         );
     }
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+// ── Step 31: Reload command ──────────────────────────────────────────
+
+#[test]
+fn test_e2e_reload_without_health_check_falls_back() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let pid_before = find_process_pid(&processes, "web");
+
+    // Reload should fall back to restart for processes without health check
+    pm3(&data_dir, work_dir)
+        .args(["reload", "web"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reloaded:"));
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let pid_after = find_process_pid(&processes, "web");
+    assert_ne!(pid_before, pid_after, "PID should change after reload");
+
+    let web = processes.iter().find(|p| p.name == "web").unwrap();
+    assert_eq!(
+        web.status,
+        ProcessStatus::Online,
+        "web should be online after reload"
+    );
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
+fn test_e2e_reload_nonexistent_errors() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    let output = pm3(&data_dir, work_dir)
+        .args(["--json", "reload", "nonexistent"])
+        .output()
+        .unwrap();
+    let response = parse_json_response(&output);
+    match response {
+        Response::Error { message } => {
+            assert!(
+                message.contains("not found"),
+                "error should contain 'not found', got: {message}"
+            );
+        }
+        other => panic!("expected Error response, got: {other:?}"),
+    }
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
+fn test_e2e_reload_pid_changes() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+
+[worker]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let web_pid_before = find_process_pid(&processes, "web");
+    let worker_pid_before = find_process_pid(&processes, "worker");
+
+    // Reload only web
+    pm3(&data_dir, work_dir)
+        .args(["reload", "web"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reloaded:"));
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let web_pid_after = find_process_pid(&processes, "web");
+    let worker_pid_after = find_process_pid(&processes, "worker");
+
+    assert_ne!(
+        web_pid_before, web_pid_after,
+        "web PID should change after reload"
+    );
+    assert_eq!(
+        worker_pid_before, worker_pid_after,
+        "worker PID should not change"
+    );
+
+    let web = processes.iter().find(|p| p.name == "web").unwrap();
+    assert_eq!(web.status, ProcessStatus::Online, "web should be online");
+    let worker = processes.iter().find(|p| p.name == "worker").unwrap();
+    assert_eq!(
+        worker.status,
+        ProcessStatus::Online,
+        "worker should be online"
+    );
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
+fn test_e2e_reload_with_health_check() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    // Use a node server that listens on an ephemeral port and writes it to a file,
+    // but the health check uses a fixed port. We launch a background socat/nc to
+    // handle the health check port separately. Instead, use a simpler approach:
+    // the process itself opens a TCP listener, and we use a unique port per test run
+    // to avoid conflicts. The key insight: during reload, the new process starts
+    // while old is running, so we need a process whose health check doesn't conflict.
+    //
+    // Solution: use a process that starts a background TCP listener that isn't
+    // the main command. We write a shell script that starts nc in background.
+
+    // Create a script that listens on a port using node
+    std::fs::write(
+        work_dir.join("server.js"),
+        r#"
+const http = require('http');
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('ok');
+});
+// Use exclusive:false to allow multiple binds (REUSEADDR)
+server.listen({port: 18935, host: '127.0.0.1', exclusive: false}, () => {
+  console.log('listening');
+});
+server.on('error', (e) => {
+  // If port is taken, retry after a delay (for reload overlap)
+  if (e.code === 'EADDRINUSE') {
+    setTimeout(() => {
+      server.listen({port: 18935, host: '127.0.0.1', exclusive: false}, () => {
+        console.log('listening on retry');
+      });
+    }, 1000);
+  }
+});
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[server]
+command = "node server.js"
+health_check = "tcp://127.0.0.1:18935"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    // Wait for health check to pass
+    wait_until_online(&data_dir, work_dir, "server", 15);
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let pid_before = find_process_pid(&processes, "server");
+
+    // Reload with health check
+    pm3(&data_dir, work_dir)
+        .args(["reload", "server"])
+        .timeout(Duration::from_secs(60))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reloaded:"));
+
+    // Wait for the reloaded process to come online
+    wait_until_online(&data_dir, work_dir, "server", 15);
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let pid_after = find_process_pid(&processes, "server");
+    assert_ne!(pid_before, pid_after, "PID should change after reload");
+
+    let server = processes.iter().find(|p| p.name == "server").unwrap();
+    assert_eq!(
+        server.status,
+        ProcessStatus::Online,
+        "server should be online after reload"
+    );
 
     kill_daemon(&data_dir, work_dir);
 }

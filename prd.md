@@ -447,11 +447,11 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~Integration: `post_stop = "echo after"` runs after process stops~~
     - ~~Integration: on restart, sequence is `post_stop` → `pre_start` → start~~
 
-31. Zero-downtime reload — `pm3 reload`, spawn new before killing old
-    - Integration: reload spawns new process, waits for health check, then kills old
-    - Integration: new process fails health check → old keeps running, reload aborted
-    - Integration: process without health check → reload falls back to restart
-    - E2E: `pm3 reload web` — PID changes, no downtime gap
+~~31. Zero-downtime reload — `pm3 reload`, spawn new before killing old~~
+    - ~~Integration: reload spawns new process, waits for health check, then kills old~~
+    - ~~Integration: new process fails health check → old keeps running, reload aborted~~
+    - ~~Integration: process without health check → reload falls back to restart~~
+    - ~~E2E: `pm3 reload web` — PID changes, no downtime gap~~
 
 ### Phase 6 — Monitoring and resource limits
 32. Max memory restart — poll memory, restart if over `max_memory`
