@@ -464,9 +464,9 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~Integration: debounce — rapid file changes trigger only one restart~~
     - ~~Integration: `watch = true` watches the process's `cwd`~~
 
-34. Watch ignore — `watch_ignore` exclusion patterns
-    - Integration: changes in ignored directories do NOT trigger restart
-    - Unit: glob pattern matching for ignore list
+~~34. Watch ignore — `watch_ignore` exclusion patterns~~
+    - ~~Integration: changes in ignored directories do NOT trigger restart~~
+    - ~~Unit: glob pattern matching for ignore list~~
 
 35. Cron-based restart — parse cron expression, schedule restarts
     - Unit: cron expression parsing (`"0 3 * * *"`, `"*/5 * * * *"`)

@@ -4005,3 +4005,82 @@ async fn test_watch_true_watches_cwd() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_watch_ignore_excludes_directories() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    // Create watched directory with an ignored subdirectory and a non-ignored one
+    let watch_dir = dir.path().join("ignore_src");
+    let ignored_dir = watch_dir.join("node_modules");
+    let src_dir = watch_dir.join("src");
+    std::fs::create_dir_all(&ignored_dir).unwrap();
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(ignored_dir.join("dep.js"), "initial").unwrap();
+    std::fs::write(src_dir.join("app.js"), "initial").unwrap();
+
+    let mut config = test_config("sleep 999");
+    config.watch = Some(Watch::Path(watch_dir.to_string_lossy().to_string()));
+    config.watch_ignore = Some(vec!["node_modules".to_string()]);
+    config.restart = Some(RestartPolicy::Never);
+
+    let mut configs = HashMap::new();
+    configs.insert("ignoreme".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Modify a file in the IGNORED directory — should NOT trigger restart
+    std::fs::write(ignored_dir.join("dep.js"), "changed").unwrap();
+
+    // Wait long enough for watcher to process (debounce + margin)
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match list_resp {
+        Response::ProcessList { processes } => {
+            let p = processes.iter().find(|p| p.name == "ignoreme").unwrap();
+            assert_eq!(
+                p.restarts, 0,
+                "changes in ignored directory should NOT trigger restart"
+            );
+            assert_eq!(p.status, ProcessStatus::Online);
+        }
+        _ => panic!("expected process list"),
+    }
+
+    // Now modify a file in the NON-ignored directory — should trigger restart
+    std::fs::write(src_dir.join("app.js"), "changed").unwrap();
+
+    let mut restarted = false;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let list_resp = send_raw_request(&paths, &Request::List).await;
+        if let Response::ProcessList { processes } = list_resp {
+            let p = processes.iter().find(|p| p.name == "ignoreme").unwrap();
+            if p.restarts >= 1 {
+                restarted = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        restarted,
+        "changes in non-ignored directory should trigger restart"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
