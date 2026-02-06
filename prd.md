@@ -474,7 +474,7 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~Integration: cron triggers a restart at the scheduled time (use short interval for test)~~
 
 ### Phase 7 — Persistence
-36. ~~State persistence — daemon writes state to `dump.json`, restores on startup~~
+~~36. State persistence — daemon writes state to `dump.json`, restores on startup~~
     - ~~Integration: start processes, verify `dump.json` is written~~
     - ~~Integration: kill daemon, restart it, verify process list is restored from dump~~
     - ~~Integration: restored processes — check which PIDs are still alive, mark dead ones as `errored`~~

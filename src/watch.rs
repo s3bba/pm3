@@ -121,11 +121,14 @@ pub fn spawn_watcher(
                 }
             };
 
-            // Check if the first event is relevant (not ignored)
+            // Check if the first event is relevant (not ignored).
+            // Skip directory paths — on macOS, FSEvents fires events for parent
+            // directories when child files change, and those parent paths may not
+            // contain the ignored component.
             let mut has_relevant = first_event
                 .paths
                 .iter()
-                .any(|p| !should_ignore(p, &ignore_patterns));
+                .any(|p| !p.is_dir() && !should_ignore(p, &ignore_patterns));
 
             // Debounce: wait DEBOUNCE_DURATION, drain any further events
             tokio::select! {
@@ -141,7 +144,7 @@ pub fn spawn_watcher(
             while let Ok(event) = rx.try_recv() {
                 if !has_relevant {
                     for path in &event.paths {
-                        if !should_ignore(path, &ignore_patterns) {
+                        if !path.is_dir() && !should_ignore(path, &ignore_patterns) {
                             has_relevant = true;
                             break;
                         }
