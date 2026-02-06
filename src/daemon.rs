@@ -10,6 +10,7 @@ use crate::process::{self, ProcessTable};
 use crate::protocol::{self, ProcessStatus, Request, Response};
 use crate::watch as file_watch;
 use color_eyre::eyre::bail;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -199,9 +200,8 @@ async fn dispatch(
             }
         }
         Request::Reload { names } => handle_reload(names, processes, paths).await,
-        _ => Response::Error {
-            message: "not implemented".to_string(),
-        },
+        Request::Save => handle_save(processes, paths).await,
+        Request::Resurrect => handle_resurrect(processes, paths).await,
     }
 }
 
@@ -1010,6 +1010,376 @@ async fn handle_reload(
     }
 
     Response::Success { message: Some(msg) }
+}
+
+// ---------------------------------------------------------------------------
+// State persistence (save / resurrect)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DumpEntry {
+    name: String,
+    config: ProcessConfig,
+    pid: Option<u32>,
+    restarts: u32,
+}
+
+async fn handle_save(processes: &Arc<RwLock<ProcessTable>>, paths: &Paths) -> Response {
+    let table = processes.read().await;
+
+    let entries: Vec<DumpEntry> = table
+        .values()
+        .map(|managed| DumpEntry {
+            name: managed.name.clone(),
+            config: managed.config.clone(),
+            pid: managed.pid,
+            restarts: managed.restarts,
+        })
+        .collect();
+
+    drop(table);
+
+    let json = match serde_json::to_string_pretty(&entries) {
+        Ok(j) => j,
+        Err(e) => {
+            return Response::Error {
+                message: format!("failed to serialize state: {}", e),
+            };
+        }
+    };
+
+    if let Err(e) = fs::write(paths.dump_file(), json.as_bytes()).await {
+        return Response::Error {
+            message: format!("failed to write dump file: {}", e),
+        };
+    }
+
+    Response::Success {
+        message: Some(format!("saved {} process(es) to dump file", entries.len())),
+    }
+}
+
+fn is_pid_alive(pid: u32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+}
+
+async fn handle_resurrect(processes: &Arc<RwLock<ProcessTable>>, paths: &Paths) -> Response {
+    let dump_path = paths.dump_file();
+    if !dump_path.exists() {
+        return Response::Error {
+            message: "no dump file found".to_string(),
+        };
+    }
+
+    let data = match fs::read_to_string(&dump_path).await {
+        Ok(d) => d,
+        Err(e) => {
+            return Response::Error {
+                message: format!("failed to read dump file: {}", e),
+            };
+        }
+    };
+
+    let entries: Vec<DumpEntry> = match serde_json::from_str(&data) {
+        Ok(e) => e,
+        Err(e) => {
+            return Response::Error {
+                message: format!("failed to parse dump file: {}", e),
+            };
+        }
+    };
+
+    // Skip entries that are already running
+    let already_running: Vec<String> = {
+        let table = processes.read().await;
+        entries
+            .iter()
+            .filter(|e| table.contains_key(&e.name))
+            .map(|e| e.name.clone())
+            .collect()
+    };
+
+    let to_restore: Vec<DumpEntry> = entries
+        .into_iter()
+        .filter(|e| !already_running.contains(&e.name))
+        .collect();
+
+    if to_restore.is_empty() {
+        return Response::Success {
+            message: Some("all processes already running".to_string()),
+        };
+    }
+
+    // Build subset configs for dependency ordering
+    let subset_configs: HashMap<String, ProcessConfig> = to_restore
+        .iter()
+        .map(|e| (e.name.clone(), e.config.clone()))
+        .collect();
+
+    // Validate and order by dependencies
+    if let Err(e) = deps::validate_deps(&subset_configs) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+
+    let levels = match deps::topological_levels(&subset_configs) {
+        Ok(l) => l,
+        Err(e) => {
+            return Response::Error {
+                message: e.to_string(),
+            };
+        }
+    };
+
+    // Build a lookup from name -> DumpEntry for restarts
+    let entry_map: HashMap<String, &DumpEntry> =
+        to_restore.iter().map(|e| (e.name.clone(), e)).collect();
+
+    let mut restored = Vec::new();
+
+    for (level_idx, level) in levels.iter().enumerate() {
+        let mut children_to_monitor: Vec<ChildToMonitor> = Vec::new();
+        let mut level_names: Vec<String> = Vec::new();
+
+        {
+            let mut table = processes.write().await;
+
+            for name in level {
+                if table.contains_key(name) {
+                    continue;
+                }
+
+                let entry = match entry_map.get(name) {
+                    Some(e) => e,
+                    None => continue,
+                };
+
+                // Check if the old PID is still alive
+                let old_alive = entry.pid.is_some_and(is_pid_alive);
+
+                if old_alive {
+                    // Re-adopt: the process is still running from before the daemon restart.
+                    // We cannot re-attach to its stdout/stderr, but we track it.
+                    let (log_tx, _) = tokio::sync::broadcast::channel(1024);
+                    let (monitor_tx, _) = watch::channel(false);
+
+                    let status = if entry.config.health_check.is_some() {
+                        ProcessStatus::Starting
+                    } else {
+                        ProcessStatus::Online
+                    };
+
+                    let managed = process::ManagedProcess {
+                        name: name.clone(),
+                        config: entry.config.clone(),
+                        pid: entry.pid,
+                        status,
+                        started_at: tokio::time::Instant::now(),
+                        restarts: entry.restarts,
+                        log_broadcaster: log_tx,
+                        monitor_shutdown: Some(monitor_tx),
+                    };
+
+                    table.insert(name.clone(), managed);
+                    level_names.push(name.clone());
+                } else {
+                    // PID is dead or missing — spawn fresh
+                    let config = entry.config.clone();
+                    let health_check = config.health_check.clone();
+                    let max_memory = config.max_memory.clone();
+                    let cron_restart = config.cron_restart.clone();
+                    match process::spawn_process(name.clone(), config.clone(), paths).await {
+                        Ok((mut managed, child)) => {
+                            managed.restarts = entry.restarts;
+                            let pid = managed.pid;
+                            let shutdown_rx = managed
+                                .monitor_shutdown
+                                .as_ref()
+                                .map(|tx| tx.subscribe())
+                                .unwrap();
+                            let health_shutdown_rx = health_check.as_ref().map(|_| {
+                                managed
+                                    .monitor_shutdown
+                                    .as_ref()
+                                    .map(|tx| tx.subscribe())
+                                    .unwrap()
+                            });
+                            let mem_shutdown_rx = max_memory.as_ref().map(|_| {
+                                managed
+                                    .monitor_shutdown
+                                    .as_ref()
+                                    .map(|tx| tx.subscribe())
+                                    .unwrap()
+                            });
+                            let watch_shutdown_rx =
+                                file_watch::resolve_watch_path(&config).map(|_| {
+                                    managed
+                                        .monitor_shutdown
+                                        .as_ref()
+                                        .map(|tx| tx.subscribe())
+                                        .unwrap()
+                                });
+                            let cron_shutdown_rx = cron_restart.as_ref().map(|_| {
+                                managed
+                                    .monitor_shutdown
+                                    .as_ref()
+                                    .map(|tx| tx.subscribe())
+                                    .unwrap()
+                            });
+                            table.insert(name.clone(), managed);
+                            children_to_monitor.push((
+                                name.clone(),
+                                child,
+                                pid,
+                                shutdown_rx,
+                                health_check,
+                                health_shutdown_rx,
+                                max_memory,
+                                mem_shutdown_rx,
+                                config,
+                                watch_shutdown_rx,
+                                cron_restart,
+                                cron_shutdown_rx,
+                            ));
+                            level_names.push(name.clone());
+                        }
+                        Err(e) => {
+                            return Response::Error {
+                                message: format!("failed to resurrect '{}': {}", name, e),
+                            };
+                        }
+                    }
+                }
+            }
+        }
+
+        // Spawn monitors for freshly spawned processes
+        for (
+            name,
+            child,
+            pid,
+            shutdown_rx,
+            health_check,
+            health_shutdown_rx,
+            max_memory,
+            mem_shutdown_rx,
+            config,
+            watch_shutdown_rx,
+            cron_restart,
+            cron_shutdown_rx,
+        ) in children_to_monitor
+        {
+            process::spawn_monitor(
+                name.clone(),
+                child,
+                pid,
+                Arc::clone(processes),
+                paths.clone(),
+                shutdown_rx,
+            );
+            if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
+                health::spawn_health_checker(name.clone(), hc, Arc::clone(processes), hc_rx);
+            }
+            if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
+                memory::spawn_memory_monitor(
+                    name.clone(),
+                    mm,
+                    Arc::clone(processes),
+                    paths.clone(),
+                    mm_rx,
+                );
+            }
+            if let Some(w_rx) = watch_shutdown_rx {
+                file_watch::spawn_watcher(
+                    name.clone(),
+                    config,
+                    Arc::clone(processes),
+                    paths.clone(),
+                    w_rx,
+                );
+            }
+            if let (Some(cr), Some(cr_rx)) = (cron_restart, cron_shutdown_rx) {
+                cron::spawn_cron_restart(name, cr, Arc::clone(processes), paths.clone(), cr_rx);
+            }
+        }
+
+        // Spawn health/memory/cron monitors for re-adopted processes
+        {
+            let table = processes.read().await;
+            for name in &level_names {
+                let managed = match table.get(name) {
+                    Some(m) => m,
+                    None => continue,
+                };
+                // Only for re-adopted (has PID, no child handle in children_to_monitor)
+                let entry = match entry_map.get(name) {
+                    Some(e) => e,
+                    None => continue,
+                };
+                if !entry.pid.is_some_and(is_pid_alive) {
+                    continue; // Was spawned fresh — already handled above
+                }
+
+                if let Some(ref hc) = entry.config.health_check {
+                    let hc_rx = managed
+                        .monitor_shutdown
+                        .as_ref()
+                        .map(|tx| tx.subscribe())
+                        .unwrap();
+                    health::spawn_health_checker(
+                        name.clone(),
+                        hc.clone(),
+                        Arc::clone(processes),
+                        hc_rx,
+                    );
+                }
+                if let Some(ref mm) = entry.config.max_memory {
+                    let mm_rx = managed
+                        .monitor_shutdown
+                        .as_ref()
+                        .map(|tx| tx.subscribe())
+                        .unwrap();
+                    memory::spawn_memory_monitor(
+                        name.clone(),
+                        mm.clone(),
+                        Arc::clone(processes),
+                        paths.clone(),
+                        mm_rx,
+                    );
+                }
+                if let Some(ref cr) = entry.config.cron_restart {
+                    let cr_rx = managed
+                        .monitor_shutdown
+                        .as_ref()
+                        .map(|tx| tx.subscribe())
+                        .unwrap();
+                    cron::spawn_cron_restart(
+                        name.clone(),
+                        cr.clone(),
+                        Arc::clone(processes),
+                        paths.clone(),
+                        cr_rx,
+                    );
+                }
+            }
+        }
+
+        restored.extend(level_names.clone());
+
+        // Wait for this level to come online before starting the next level
+        let is_last_level = level_idx == levels.len() - 1;
+        if !is_last_level
+            && !level_names.is_empty()
+            && let Err(msg) = wait_for_online(&level_names, processes).await
+        {
+            return Response::Error { message: msg };
+        }
+    }
+
+    Response::Success {
+        message: Some(format!("resurrected: {}", restored.join(", "))),
+    }
 }
 
 async fn handle_flush(

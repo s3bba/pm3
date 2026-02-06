@@ -4186,3 +4186,250 @@ async fn test_cron_restart_no_trigger_with_long_interval() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ---------------------------------------------------------------------------
+// State persistence (save / resurrect) tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_save_writes_dump_file() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    // Start two processes
+    let mut configs = HashMap::new();
+    configs.insert("alpha".to_string(), test_config("sleep 999"));
+    configs.insert("beta".to_string(), test_config("sleep 888"));
+
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Save
+    let resp = send_raw_request(&paths, &Request::Save).await;
+    match resp {
+        Response::Success { message } => {
+            assert!(message.unwrap().contains("2 process(es)"));
+        }
+        _ => panic!("expected success, got {:?}", resp),
+    }
+
+    // Verify dump file exists and is valid JSON
+    let dump_path = paths.dump_file();
+    assert!(dump_path.exists(), "dump.json should exist");
+    let data = std::fs::read_to_string(&dump_path).unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&data).unwrap();
+    assert!(entries.is_array());
+    assert_eq!(entries.as_array().unwrap().len(), 2);
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn test_resurrect_restores_processes() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    // Phase 1: start daemon, start processes, save, kill daemon
+    {
+        let handle = start_test_daemon(&paths).await;
+
+        let mut configs = HashMap::new();
+        configs.insert("web".to_string(), test_config("sleep 999"));
+        configs.insert("worker".to_string(), test_config("sleep 888"));
+
+        send_raw_request(
+            &paths,
+            &Request::Start {
+                configs,
+                names: None,
+                env: None,
+            },
+        )
+        .await;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Save state
+        send_raw_request(&paths, &Request::Save).await;
+
+        // Kill daemon (this also kills the processes)
+        send_raw_request(&paths, &Request::Kill).await;
+        let _ = handle.await;
+    }
+
+    // Small delay between daemon instances
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Phase 2: start a new daemon, resurrect
+    {
+        let handle = start_test_daemon(&paths).await;
+
+        // Verify no processes running
+        let resp = send_raw_request(&paths, &Request::List).await;
+        match &resp {
+            Response::ProcessList { processes } => {
+                assert!(
+                    processes.is_empty(),
+                    "fresh daemon should have no processes"
+                );
+            }
+            _ => panic!("expected process list"),
+        }
+
+        // Resurrect
+        let resp = send_raw_request(&paths, &Request::Resurrect).await;
+        match resp {
+            Response::Success { message } => {
+                let msg = message.unwrap();
+                assert!(msg.contains("web"), "should mention web: {}", msg);
+                assert!(msg.contains("worker"), "should mention worker: {}", msg);
+            }
+            _ => panic!("expected success, got {:?}", resp),
+        }
+
+        // Wait for processes to come online
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify both processes are running
+        let resp = send_raw_request(&paths, &Request::List).await;
+        match resp {
+            Response::ProcessList { processes } => {
+                assert_eq!(processes.len(), 2);
+                for p in &processes {
+                    assert_eq!(p.status, ProcessStatus::Online);
+                    assert!(p.pid.is_some());
+                }
+            }
+            _ => panic!("expected process list"),
+        }
+
+        send_raw_request(&paths, &Request::Kill).await;
+        let _ = handle.await;
+    }
+}
+
+#[tokio::test]
+async fn test_resurrect_marks_dead_processes_as_restarted() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    // Phase 1: start a process, save, kill daemon
+    {
+        let handle = start_test_daemon(&paths).await;
+
+        let mut configs = HashMap::new();
+        configs.insert("myproc".to_string(), test_config("sleep 999"));
+
+        send_raw_request(
+            &paths,
+            &Request::Start {
+                configs,
+                names: None,
+                env: None,
+            },
+        )
+        .await;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Save state
+        send_raw_request(&paths, &Request::Save).await;
+
+        // Kill daemon (processes get killed too)
+        send_raw_request(&paths, &Request::Kill).await;
+        let _ = handle.await;
+    }
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Phase 2: resurrect — old PID is dead, so process gets freshly spawned
+    {
+        let handle = start_test_daemon(&paths).await;
+
+        let resp = send_raw_request(&paths, &Request::Resurrect).await;
+        match resp {
+            Response::Success { message } => {
+                assert!(message.unwrap().contains("myproc"));
+            }
+            _ => panic!("expected success, got {:?}", resp),
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Process should be online with a new PID
+        let resp = send_raw_request(&paths, &Request::List).await;
+        match resp {
+            Response::ProcessList { processes } => {
+                assert_eq!(processes.len(), 1);
+                let p = &processes[0];
+                assert_eq!(p.name, "myproc");
+                assert_eq!(p.status, ProcessStatus::Online);
+                assert!(p.pid.is_some());
+            }
+            _ => panic!("expected process list"),
+        }
+
+        send_raw_request(&paths, &Request::Kill).await;
+        let _ = handle.await;
+    }
+}
+
+#[tokio::test]
+async fn test_resurrect_no_dump_file_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    let resp = send_raw_request(&paths, &Request::Resurrect).await;
+    match resp {
+        Response::Error { message } => {
+            assert!(message.contains("no dump file"), "got: {}", message);
+        }
+        _ => panic!("expected error, got {:?}", resp),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[test]
+fn test_dump_serialization_roundtrip() {
+    use serde_json;
+
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+    struct DumpEntry {
+        name: String,
+        config: ProcessConfig,
+        pid: Option<u32>,
+        restarts: u32,
+    }
+
+    let config = test_config("sleep 999");
+    let entry = DumpEntry {
+        name: "myproc".to_string(),
+        config: config.clone(),
+        pid: Some(12345),
+        restarts: 3,
+    };
+
+    let entries = vec![entry.clone()];
+    let json = serde_json::to_string_pretty(&entries).unwrap();
+    let restored: Vec<DumpEntry> = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].name, "myproc");
+    assert_eq!(restored[0].pid, Some(12345));
+    assert_eq!(restored[0].restarts, 3);
+    assert_eq!(restored[0].config.command, "sleep 999");
+}
