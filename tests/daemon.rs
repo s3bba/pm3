@@ -1,4 +1,4 @@
-use pm3::config::{self, EnvFile, ProcessConfig, RestartPolicy};
+use pm3::config::{self, EnvFile, ProcessConfig, RestartPolicy, Watch};
 use pm3::daemon;
 use pm3::log::LOG_ROTATION_SIZE;
 use pm3::paths::Paths;
@@ -3802,6 +3802,205 @@ async fn test_max_memory_no_restart_when_under_limit() {
         }
         _ => panic!("expected process list"),
     }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_watch_restarts_on_file_change() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    // Create a watched directory with a file
+    let watch_dir = dir.path().join("watched_src");
+    std::fs::create_dir_all(&watch_dir).unwrap();
+    std::fs::write(watch_dir.join("app.txt"), "initial").unwrap();
+
+    let mut config = test_config("sleep 999");
+    config.watch = Some(Watch::Path(watch_dir.to_string_lossy().to_string()));
+    config.restart = Some(RestartPolicy::Never);
+
+    let mut configs = HashMap::new();
+    configs.insert("watchme".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    // Capture original PID
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let orig_pid = {
+        let list_resp = send_raw_request(&paths, &Request::List).await;
+        match list_resp {
+            Response::ProcessList { processes } => {
+                let p = processes.iter().find(|p| p.name == "watchme").unwrap();
+                p.pid.unwrap()
+            }
+            _ => panic!("expected process list"),
+        }
+    };
+
+    // Modify a file in the watched directory
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    std::fs::write(watch_dir.join("app.txt"), "changed").unwrap();
+
+    // Wait for watcher to detect + debounce + restart (up to 10s)
+    let mut restarted = false;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let list_resp = send_raw_request(&paths, &Request::List).await;
+        if let Response::ProcessList { processes } = list_resp {
+            let p = processes.iter().find(|p| p.name == "watchme").unwrap();
+            if p.restarts >= 1 && p.pid.is_some() && p.pid.unwrap() != orig_pid {
+                restarted = true;
+                assert!(p.status == ProcessStatus::Online || p.status == ProcessStatus::Starting);
+                break;
+            }
+        }
+    }
+    assert!(
+        restarted,
+        "process should have been restarted after file change"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_watch_debounce_rapid_changes_trigger_one_restart() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    let watch_dir = dir.path().join("debounce_src");
+    std::fs::create_dir_all(&watch_dir).unwrap();
+    std::fs::write(watch_dir.join("file.txt"), "v0").unwrap();
+
+    let mut config = test_config("sleep 999");
+    config.watch = Some(Watch::Path(watch_dir.to_string_lossy().to_string()));
+    config.restart = Some(RestartPolicy::Never);
+
+    let mut configs = HashMap::new();
+    configs.insert("debounce".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Rapid-fire multiple changes within debounce window
+    for i in 1..=5 {
+        std::fs::write(watch_dir.join("file.txt"), format!("v{i}")).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Wait for restart
+    let mut final_restarts = 0;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let list_resp = send_raw_request(&paths, &Request::List).await;
+        if let Response::ProcessList { processes } = list_resp {
+            let p = processes.iter().find(|p| p.name == "debounce").unwrap();
+            final_restarts = p.restarts;
+            if final_restarts >= 1 {
+                break;
+            }
+        }
+    }
+
+    // Should have restarted exactly once (debounced), not 5 times
+    assert_eq!(
+        final_restarts, 1,
+        "rapid file changes should debounce into a single restart, got {} restarts",
+        final_restarts
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_watch_true_watches_cwd() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    // Create a cwd directory
+    let cwd_dir = dir.path().join("app_cwd");
+    std::fs::create_dir_all(&cwd_dir).unwrap();
+    std::fs::write(cwd_dir.join("data.txt"), "initial").unwrap();
+
+    let mut config = test_config("sleep 999");
+    config.watch = Some(Watch::Enabled(true));
+    config.cwd = Some(cwd_dir.to_string_lossy().to_string());
+    config.restart = Some(RestartPolicy::Never);
+
+    let mut configs = HashMap::new();
+    configs.insert("cwdwatch".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    // Capture original PID
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let orig_pid = {
+        let list_resp = send_raw_request(&paths, &Request::List).await;
+        match list_resp {
+            Response::ProcessList { processes } => {
+                let p = processes.iter().find(|p| p.name == "cwdwatch").unwrap();
+                p.pid.unwrap()
+            }
+            _ => panic!("expected process list"),
+        }
+    };
+
+    // Modify a file in the cwd directory
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    std::fs::write(cwd_dir.join("data.txt"), "modified").unwrap();
+
+    // Wait for watcher to restart
+    let mut restarted = false;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let list_resp = send_raw_request(&paths, &Request::List).await;
+        if let Response::ProcessList { processes } = list_resp {
+            let p = processes.iter().find(|p| p.name == "cwdwatch").unwrap();
+            if p.restarts >= 1 && p.pid.is_some() && p.pid.unwrap() != orig_pid {
+                restarted = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        restarted,
+        "process should have been restarted when file in cwd changed"
+    );
 
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;

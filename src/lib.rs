@@ -11,3 +11,4 @@ pub mod paths;
 pub mod pid;
 pub mod process;
 pub mod protocol;
+pub mod watch;

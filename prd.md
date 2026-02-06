@@ -459,10 +459,10 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~Integration: process exceeds memory limit → daemon restarts it~~
     - ~~Integration: memory check interval is reasonable (not spinning CPU)~~
 
-33. Watch mode — file change detection, debounce, auto-restart
-    - Integration: `watch = "./src"`, modify a file in `./src` → process restarts
-    - Integration: debounce — rapid file changes trigger only one restart
-    - Integration: `watch = true` watches the process's `cwd`
+~~33. Watch mode — file change detection, debounce, auto-restart~~
+    - ~~Integration: `watch = "./src"`, modify a file in `./src` → process restarts~~
+    - ~~Integration: debounce — rapid file changes trigger only one restart~~
+    - ~~Integration: `watch = true` watches the process's `cwd`~~
 
 34. Watch ignore — `watch_ignore` exclusion patterns
     - Integration: changes in ignored directories do NOT trigger restart

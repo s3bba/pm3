@@ -7,6 +7,7 @@ use crate::paths::Paths;
 use crate::pid;
 use crate::process::{self, ProcessTable};
 use crate::protocol::{self, ProcessStatus, Request, Response};
+use crate::watch as file_watch;
 use color_eyre::eyre::bail;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +26,8 @@ type ChildToMonitor = (
     Option<String>,
     Option<watch::Receiver<bool>>,
     Option<String>,
+    Option<watch::Receiver<bool>>,
+    ProcessConfig,
     Option<watch::Receiver<bool>>,
 );
 
@@ -329,7 +332,7 @@ async fn handle_start(
                 let config = subset_configs.get(name).unwrap().clone();
                 let health_check = config.health_check.clone();
                 let max_memory = config.max_memory.clone();
-                match process::spawn_process(name.clone(), config, paths).await {
+                match process::spawn_process(name.clone(), config.clone(), paths).await {
                     Ok((managed, child)) => {
                         let pid = managed.pid;
                         let shutdown_rx = managed
@@ -351,6 +354,13 @@ async fn handle_start(
                                 .map(|tx| tx.subscribe())
                                 .unwrap()
                         });
+                        let watch_shutdown_rx = file_watch::resolve_watch_path(&config).map(|_| {
+                            managed
+                                .monitor_shutdown
+                                .as_ref()
+                                .map(|tx| tx.subscribe())
+                                .unwrap()
+                        });
                         table.insert(name.clone(), managed);
                         children_to_monitor.push((
                             name.clone(),
@@ -361,6 +371,8 @@ async fn handle_start(
                             health_shutdown_rx,
                             max_memory,
                             mem_shutdown_rx,
+                            config,
+                            watch_shutdown_rx,
                         ));
                         names_this_level.push(name.clone());
                     }
@@ -375,7 +387,7 @@ async fn handle_start(
             level_names = names_this_level;
         }
 
-        // Spawn monitors, health checkers, and memory monitors outside the lock
+        // Spawn monitors, health checkers, memory monitors, and file watchers outside the lock
         for (
             name,
             child,
@@ -385,6 +397,8 @@ async fn handle_start(
             health_shutdown_rx,
             max_memory,
             mem_shutdown_rx,
+            config,
+            watch_shutdown_rx,
         ) in children_to_monitor
         {
             process::spawn_monitor(
@@ -399,7 +413,16 @@ async fn handle_start(
                 health::spawn_health_checker(name.clone(), hc, Arc::clone(processes), hc_rx);
             }
             if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
-                memory::spawn_memory_monitor(name, mm, Arc::clone(processes), paths.clone(), mm_rx);
+                memory::spawn_memory_monitor(
+                    name.clone(),
+                    mm,
+                    Arc::clone(processes),
+                    paths.clone(),
+                    mm_rx,
+                );
+            }
+            if let Some(w_rx) = watch_shutdown_rx {
+                file_watch::spawn_watcher(name, config, Arc::clone(processes), paths.clone(), w_rx);
             }
         }
 
@@ -625,7 +648,7 @@ async fn handle_restart(
 
                 let health_check = config.health_check.clone();
                 let max_memory = config.max_memory.clone();
-                match process::spawn_process(name.clone(), config, paths).await {
+                match process::spawn_process(name.clone(), config.clone(), paths).await {
                     Ok((mut new_managed, child)) => {
                         new_managed.restarts = old_restarts + 1;
                         let pid = new_managed.pid;
@@ -648,6 +671,13 @@ async fn handle_restart(
                                 .map(|tx| tx.subscribe())
                                 .unwrap()
                         });
+                        let watch_shutdown_rx = file_watch::resolve_watch_path(&config).map(|_| {
+                            new_managed
+                                .monitor_shutdown
+                                .as_ref()
+                                .map(|tx| tx.subscribe())
+                                .unwrap()
+                        });
                         table.insert(name.clone(), new_managed);
                         children_to_monitor.push((
                             name.clone(),
@@ -658,6 +688,8 @@ async fn handle_restart(
                             health_shutdown_rx,
                             max_memory,
                             mem_shutdown_rx,
+                            config,
+                            watch_shutdown_rx,
                         ));
                         level_names.push(name.clone());
                     }
@@ -670,7 +702,7 @@ async fn handle_restart(
             }
         }
 
-        // Spawn monitors, health checkers, and memory monitors outside the lock
+        // Spawn monitors, health checkers, memory monitors, and file watchers outside the lock
         for (
             name,
             child,
@@ -680,6 +712,8 @@ async fn handle_restart(
             health_shutdown_rx,
             max_memory,
             mem_shutdown_rx,
+            config,
+            watch_shutdown_rx,
         ) in children_to_monitor
         {
             process::spawn_monitor(
@@ -694,7 +728,16 @@ async fn handle_restart(
                 health::spawn_health_checker(name.clone(), hc, Arc::clone(processes), hc_rx);
             }
             if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
-                memory::spawn_memory_monitor(name, mm, Arc::clone(processes), paths.clone(), mm_rx);
+                memory::spawn_memory_monitor(
+                    name.clone(),
+                    mm,
+                    Arc::clone(processes),
+                    paths.clone(),
+                    mm_rx,
+                );
+            }
+            if let Some(w_rx) = watch_shutdown_rx {
+                file_watch::spawn_watcher(name, config, Arc::clone(processes), paths.clone(), w_rx);
             }
         }
 
@@ -819,7 +862,7 @@ async fn handle_reload(
                             }
                         }
 
-                        // Move temp entry to original name and spawn memory monitor
+                        // Move temp entry to original name and spawn memory monitor + watcher
                         if let Some(mut new_managed) = table.remove(&temp_name) {
                             new_managed.name = name.clone();
                             let mem_shutdown_rx = max_memory.as_ref().map(|_| {
@@ -829,6 +872,14 @@ async fn handle_reload(
                                     .map(|tx| tx.subscribe())
                                     .unwrap()
                             });
+                            let watch_shutdown_rx =
+                                file_watch::resolve_watch_path(&config).map(|_| {
+                                    new_managed
+                                        .monitor_shutdown
+                                        .as_ref()
+                                        .map(|tx| tx.subscribe())
+                                        .unwrap()
+                                });
                             table.insert(name.clone(), new_managed);
                             drop(table);
                             if let (Some(mm), Some(mm_rx)) = (max_memory.clone(), mem_shutdown_rx) {
@@ -838,6 +889,15 @@ async fn handle_reload(
                                     Arc::clone(processes),
                                     paths.clone(),
                                     mm_rx,
+                                );
+                            }
+                            if let Some(w_rx) = watch_shutdown_rx {
+                                file_watch::spawn_watcher(
+                                    name.clone(),
+                                    config.clone(),
+                                    Arc::clone(processes),
+                                    paths.clone(),
+                                    w_rx,
                                 );
                             }
                         }
