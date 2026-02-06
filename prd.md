@@ -480,10 +480,10 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~Integration: restored processes — check which PIDs are still alive, mark dead ones as `errored`~~
     - ~~Unit: dump file serialization/deserialization roundtrip~~
 
-37. Save & resurrect — `pm3 save` / `pm3 resurrect`
-    - E2E: `pm3 save` creates snapshot file
-    - E2E: `pm3 kill`, then `pm3 resurrect` restarts all previously saved processes
-    - Integration: resurrect from a different directory works (snapshot stores absolute paths)
+~~37. Save & resurrect — `pm3 save` / `pm3 resurrect`~~
+    - ~~E2E: `pm3 save` creates snapshot file~~
+    - ~~E2E: `pm3 kill`, then `pm3 resurrect` restarts all previously saved processes~~
+    - ~~Integration: resurrect from a different directory works (snapshot stores absolute paths)~~
 
 ### Phase 8 — Notifications
 38. Crash notifications (webhook) — POST JSON on crash/unhealthy

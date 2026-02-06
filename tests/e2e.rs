@@ -1404,3 +1404,172 @@ command = "sleep 999"
 
     kill_daemon(&data_dir, work_dir);
 }
+
+// ---------------------------------------------------------------------------
+// Save & resurrect E2E tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_e2e_save_creates_snapshot_file() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+
+[worker]
+command = "sleep 888"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Save
+    pm3(&data_dir, work_dir)
+        .arg("save")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("saved"));
+
+    // Verify dump.json exists and contains both processes
+    let dump_path = data_dir.join("dump.json");
+    assert!(dump_path.exists(), "dump.json should exist after save");
+
+    let data = std::fs::read_to_string(&dump_path).unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&data).unwrap();
+    let arr = entries.as_array().unwrap();
+    assert_eq!(arr.len(), 2, "dump should contain 2 processes");
+
+    let names: Vec<&str> = arr.iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"web"), "dump should contain 'web'");
+    assert!(names.contains(&"worker"), "dump should contain 'worker'");
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
+fn test_e2e_kill_then_resurrect_restores_processes() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[alpha]
+command = "sleep 999"
+
+[beta]
+command = "sleep 888"
+"#,
+    )
+    .unwrap();
+
+    // Start and save
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+    std::thread::sleep(Duration::from_millis(500));
+
+    pm3(&data_dir, work_dir).arg("save").assert().success();
+
+    // Kill daemon
+    kill_daemon(&data_dir, work_dir);
+
+    // Resurrect — this auto-starts the daemon and restores processes
+    pm3(&data_dir, work_dir)
+        .arg("resurrect")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("resurrected"));
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Verify both processes are running
+    let processes = get_process_list(&data_dir, work_dir);
+    assert_eq!(
+        processes.len(),
+        2,
+        "should have 2 processes after resurrect"
+    );
+    for p in &processes {
+        assert_eq!(
+            p.status,
+            ProcessStatus::Online,
+            "'{}' should be online after resurrect",
+            p.name
+        );
+        assert!(p.pid.is_some(), "'{}' should have a PID", p.name);
+    }
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
+fn test_e2e_resurrect_stores_absolute_paths() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+    let cwd_dir = dir.path().join("myapp");
+    std::fs::create_dir_all(&cwd_dir).unwrap();
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        format!(
+            r#"
+[app]
+command = "sleep 999"
+cwd = "{}"
+"#,
+            cwd_dir.display()
+        ),
+    )
+    .unwrap();
+
+    // Start and save
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+    std::thread::sleep(Duration::from_millis(500));
+    pm3(&data_dir, work_dir).arg("save").assert().success();
+
+    // Verify the dump file contains the absolute cwd path
+    let dump_path = data_dir.join("dump.json");
+    let data = std::fs::read_to_string(&dump_path).unwrap();
+    assert!(
+        data.contains(&cwd_dir.to_string_lossy().to_string()),
+        "dump should contain absolute cwd path"
+    );
+
+    // Kill daemon
+    kill_daemon(&data_dir, work_dir);
+
+    // Resurrect from a DIFFERENT working directory
+    let other_dir = dir.path().join("other");
+    std::fs::create_dir_all(&other_dir).unwrap();
+
+    // We need a pm3.toml in the new dir for the CLI, but resurrect reads from dump
+    std::fs::write(
+        other_dir.join("pm3.toml"),
+        "[placeholder]\ncommand = \"true\"\n",
+    )
+    .unwrap();
+
+    pm3(&data_dir, &other_dir)
+        .arg("resurrect")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("resurrected"));
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Verify process is running with original config
+    let processes = get_process_list(&data_dir, &other_dir);
+    let app = processes.iter().find(|p| p.name == "app");
+    assert!(app.is_some(), "app should be restored");
+    assert_eq!(app.unwrap().status, ProcessStatus::Online);
+
+    kill_daemon(&data_dir, &other_dir);
+}
