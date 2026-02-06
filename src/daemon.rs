@@ -2,6 +2,7 @@ use crate::config::ProcessConfig;
 use crate::deps;
 use crate::health;
 use crate::log;
+use crate::memory;
 use crate::paths::Paths;
 use crate::pid;
 use crate::process::{self, ProcessTable};
@@ -21,6 +22,8 @@ type ChildToMonitor = (
     tokio::process::Child,
     Option<u32>,
     watch::Receiver<bool>,
+    Option<String>,
+    Option<watch::Receiver<bool>>,
     Option<String>,
     Option<watch::Receiver<bool>>,
 );
@@ -325,6 +328,7 @@ async fn handle_start(
 
                 let config = subset_configs.get(name).unwrap().clone();
                 let health_check = config.health_check.clone();
+                let max_memory = config.max_memory.clone();
                 match process::spawn_process(name.clone(), config, paths).await {
                     Ok((managed, child)) => {
                         let pid = managed.pid;
@@ -340,6 +344,13 @@ async fn handle_start(
                                 .map(|tx| tx.subscribe())
                                 .unwrap()
                         });
+                        let mem_shutdown_rx = max_memory.as_ref().map(|_| {
+                            managed
+                                .monitor_shutdown
+                                .as_ref()
+                                .map(|tx| tx.subscribe())
+                                .unwrap()
+                        });
                         table.insert(name.clone(), managed);
                         children_to_monitor.push((
                             name.clone(),
@@ -348,6 +359,8 @@ async fn handle_start(
                             shutdown_rx,
                             health_check,
                             health_shutdown_rx,
+                            max_memory,
+                            mem_shutdown_rx,
                         ));
                         names_this_level.push(name.clone());
                     }
@@ -362,8 +375,17 @@ async fn handle_start(
             level_names = names_this_level;
         }
 
-        // Spawn monitors and health checkers outside the lock
-        for (name, child, pid, shutdown_rx, health_check, health_shutdown_rx) in children_to_monitor
+        // Spawn monitors, health checkers, and memory monitors outside the lock
+        for (
+            name,
+            child,
+            pid,
+            shutdown_rx,
+            health_check,
+            health_shutdown_rx,
+            max_memory,
+            mem_shutdown_rx,
+        ) in children_to_monitor
         {
             process::spawn_monitor(
                 name.clone(),
@@ -374,7 +396,10 @@ async fn handle_start(
                 shutdown_rx,
             );
             if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-                health::spawn_health_checker(name, hc, Arc::clone(processes), hc_rx);
+                health::spawn_health_checker(name.clone(), hc, Arc::clone(processes), hc_rx);
+            }
+            if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
+                memory::spawn_memory_monitor(name, mm, Arc::clone(processes), paths.clone(), mm_rx);
             }
         }
 
@@ -599,6 +624,7 @@ async fn handle_restart(
                 let old_restarts = old_restarts_map.get(name).copied().unwrap_or(0);
 
                 let health_check = config.health_check.clone();
+                let max_memory = config.max_memory.clone();
                 match process::spawn_process(name.clone(), config, paths).await {
                     Ok((mut new_managed, child)) => {
                         new_managed.restarts = old_restarts + 1;
@@ -615,6 +641,13 @@ async fn handle_restart(
                                 .map(|tx| tx.subscribe())
                                 .unwrap()
                         });
+                        let mem_shutdown_rx = max_memory.as_ref().map(|_| {
+                            new_managed
+                                .monitor_shutdown
+                                .as_ref()
+                                .map(|tx| tx.subscribe())
+                                .unwrap()
+                        });
                         table.insert(name.clone(), new_managed);
                         children_to_monitor.push((
                             name.clone(),
@@ -623,6 +656,8 @@ async fn handle_restart(
                             shutdown_rx,
                             health_check,
                             health_shutdown_rx,
+                            max_memory,
+                            mem_shutdown_rx,
                         ));
                         level_names.push(name.clone());
                     }
@@ -635,8 +670,17 @@ async fn handle_restart(
             }
         }
 
-        // Spawn monitors and health checkers outside the lock
-        for (name, child, pid, shutdown_rx, health_check, health_shutdown_rx) in children_to_monitor
+        // Spawn monitors, health checkers, and memory monitors outside the lock
+        for (
+            name,
+            child,
+            pid,
+            shutdown_rx,
+            health_check,
+            health_shutdown_rx,
+            max_memory,
+            mem_shutdown_rx,
+        ) in children_to_monitor
         {
             process::spawn_monitor(
                 name.clone(),
@@ -647,7 +691,10 @@ async fn handle_restart(
                 shutdown_rx,
             );
             if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-                health::spawn_health_checker(name, hc, Arc::clone(processes), hc_rx);
+                health::spawn_health_checker(name.clone(), hc, Arc::clone(processes), hc_rx);
+            }
+            if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
+                memory::spawn_memory_monitor(name, mm, Arc::clone(processes), paths.clone(), mm_rx);
             }
         }
 
@@ -710,6 +757,7 @@ async fn handle_reload(
     for (name, config, old_restarts) in with_hc {
         let temp_name = format!("__reload_{}", name);
         let health_check = config.health_check.clone();
+        let max_memory = config.max_memory.clone();
 
         // Spawn new process under temporary name
         match process::spawn_process(temp_name.clone(), config.clone(), paths).await {
@@ -771,10 +819,27 @@ async fn handle_reload(
                             }
                         }
 
-                        // Move temp entry to original name
+                        // Move temp entry to original name and spawn memory monitor
                         if let Some(mut new_managed) = table.remove(&temp_name) {
                             new_managed.name = name.clone();
+                            let mem_shutdown_rx = max_memory.as_ref().map(|_| {
+                                new_managed
+                                    .monitor_shutdown
+                                    .as_ref()
+                                    .map(|tx| tx.subscribe())
+                                    .unwrap()
+                            });
                             table.insert(name.clone(), new_managed);
+                            drop(table);
+                            if let (Some(mm), Some(mm_rx)) = (max_memory.clone(), mem_shutdown_rx) {
+                                memory::spawn_memory_monitor(
+                                    name.clone(),
+                                    mm,
+                                    Arc::clone(processes),
+                                    paths.clone(),
+                                    mm_rx,
+                                );
+                            }
                         }
 
                         reloaded.push(name);

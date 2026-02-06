@@ -3702,3 +3702,107 @@ async fn test_restart_runs_post_stop_then_pre_start() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_max_memory_restart_triggers() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    // Node script that allocates ~30MB of filled buffers (RSS ~65MB)
+    let mut config = test_config(
+        r#"node -e "const bufs = []; for (let i = 0; i < 30; i++) { const b = Buffer.alloc(1024*1024); b.fill(0x42); bufs.push(b); } setInterval(() => {}, 1000);""#,
+    );
+    config.max_memory = Some("50M".to_string());
+    // Don't let restart policy interfere; memory restarts are maintenance ops
+    config.restart = Some(RestartPolicy::Never);
+
+    let mut configs = HashMap::new();
+    configs.insert("memhog".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    // Capture original PID
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let orig_pid = {
+        let list_resp = send_raw_request(&paths, &Request::List).await;
+        match list_resp {
+            Response::ProcessList { processes } => {
+                let p = processes.iter().find(|p| p.name == "memhog").unwrap();
+                p.pid.unwrap()
+            }
+            _ => panic!("expected process list"),
+        }
+    };
+
+    // Wait for memory monitor to detect + restart (up to 15s)
+    let mut restarted = false;
+    for _ in 0..30 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let list_resp = send_raw_request(&paths, &Request::List).await;
+        if let Response::ProcessList { processes } = list_resp {
+            let p = processes.iter().find(|p| p.name == "memhog").unwrap();
+            if p.restarts >= 1 && p.pid.is_some() && p.pid.unwrap() != orig_pid {
+                restarted = true;
+                assert!(p.status == ProcessStatus::Online || p.status == ProcessStatus::Starting);
+                break;
+            }
+        }
+    }
+    assert!(
+        restarted,
+        "process should have been restarted due to memory limit"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_max_memory_no_restart_when_under_limit() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    let mut config = test_config("sleep 999");
+    config.max_memory = Some("500M".to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("lowmem".to_string(), config);
+
+    let resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(matches!(resp, Response::Success { .. }));
+
+    // Wait ~12s (two check intervals)
+    tokio::time::sleep(Duration::from_secs(12)).await;
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match list_resp {
+        Response::ProcessList { processes } => {
+            let p = processes.iter().find(|p| p.name == "lowmem").unwrap();
+            assert_eq!(p.restarts, 0, "process should not have been restarted");
+            assert_eq!(p.status, ProcessStatus::Online);
+        }
+        _ => panic!("expected process list"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}

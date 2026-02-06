@@ -481,7 +481,15 @@ async fn handle_child_exit(
                     .map(|tx| tx.subscribe())
                     .unwrap()
             });
+            let mem_shutdown_rx = config.max_memory.as_ref().map(|_| {
+                new_managed
+                    .monitor_shutdown
+                    .as_ref()
+                    .map(|tx| tx.subscribe())
+                    .unwrap()
+            });
             let health_check = config.health_check.clone();
+            let max_memory = config.max_memory.clone();
 
             *managed = new_managed;
 
@@ -495,11 +503,14 @@ async fn handle_child_exit(
                 new_child,
                 new_pid,
                 Arc::clone(&procs),
-                p,
+                p.clone(),
                 shutdown_rx,
             );
             if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-                crate::health::spawn_health_checker(n, hc, procs, hc_rx);
+                crate::health::spawn_health_checker(n.clone(), hc, Arc::clone(&procs), hc_rx);
+            }
+            if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
+                crate::memory::spawn_memory_monitor(n, mm, procs, p, mm_rx);
             }
         }
         Err(e) => {

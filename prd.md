@@ -454,10 +454,10 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~E2E: `pm3 reload web` — PID changes, no downtime gap~~
 
 ### Phase 6 — Monitoring and resource limits
-32. Max memory restart — poll memory, restart if over `max_memory`
-    - Unit: parse `"200M"`, `"1G"` into bytes
-    - Integration: process exceeds memory limit → daemon restarts it
-    - Integration: memory check interval is reasonable (not spinning CPU)
+~~32. Max memory restart — poll memory, restart if over `max_memory`~~
+    - ~~Unit: parse `"200M"`, `"1G"` into bytes~~
+    - ~~Integration: process exceeds memory limit → daemon restarts it~~
+    - ~~Integration: memory check interval is reasonable (not spinning CPU)~~
 
 33. Watch mode — file change detection, debounce, auto-restart
     - Integration: `watch = "./src"`, modify a file in `./src` → process restarts
