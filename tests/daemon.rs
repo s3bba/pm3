@@ -4084,3 +4084,105 @@ async fn test_watch_ignore_excludes_directories() {
     send_raw_request(&paths, &Request::Kill).await;
     let _ = handle.await;
 }
+
+// ---------------------------------------------------------------------------
+// Cron restart tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_cron_restart_triggers() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    // Use a 6-field cron expression (with seconds): fire every 3 seconds
+    let mut config = test_config("sleep 999");
+    config.cron_restart = Some("*/3 * * * * *".to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("cronproc".to_string(), config);
+
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    // Get initial PID
+    let initial_pid;
+    loop {
+        let resp = send_raw_request(&paths, &Request::List).await;
+        if let Response::ProcessList { processes } = resp {
+            if let Some(p) = processes.iter().find(|p| p.name == "cronproc") {
+                if p.pid.is_some() {
+                    initial_pid = p.pid;
+                    break;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // Wait for cron to trigger a restart (up to 10 seconds)
+    let mut restarted = false;
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let resp = send_raw_request(&paths, &Request::List).await;
+        if let Response::ProcessList { processes } = resp {
+            if let Some(p) = processes.iter().find(|p| p.name == "cronproc") {
+                if p.restarts >= 1 && p.pid != initial_pid && p.status == ProcessStatus::Online {
+                    restarted = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(restarted, "cron_restart should trigger a restart");
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn test_cron_restart_no_trigger_with_long_interval() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+    let handle = start_test_daemon(&paths).await;
+
+    // Use a cron expression that won't fire during the test (daily at 3am)
+    let mut config = test_config("sleep 999");
+    config.cron_restart = Some("0 3 * * *".to_string());
+
+    let mut configs = HashMap::new();
+    configs.insert("longcron".to_string(), config);
+
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+
+    // Wait a few seconds and verify no restart happened
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let resp = send_raw_request(&paths, &Request::List).await;
+    match resp {
+        Response::ProcessList { processes } => {
+            let p = processes.iter().find(|p| p.name == "longcron").unwrap();
+            assert_eq!(p.restarts, 0, "no cron restart should have triggered");
+            assert_eq!(p.status, ProcessStatus::Online);
+        }
+        _ => panic!("expected process list"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}

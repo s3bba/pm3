@@ -495,8 +495,16 @@ async fn handle_child_exit(
                     .map(|tx| tx.subscribe())
                     .unwrap()
             });
+            let cron_shutdown_rx = config.cron_restart.as_ref().map(|_| {
+                new_managed
+                    .monitor_shutdown
+                    .as_ref()
+                    .map(|tx| tx.subscribe())
+                    .unwrap()
+            });
             let health_check = config.health_check.clone();
             let max_memory = config.max_memory.clone();
+            let cron_restart = config.cron_restart.clone();
 
             *managed = new_managed;
 
@@ -526,7 +534,16 @@ async fn handle_child_exit(
                 );
             }
             if let Some(w_rx) = watch_shutdown_rx {
-                crate::watch::spawn_watcher(n, config, procs, p, w_rx);
+                crate::watch::spawn_watcher(
+                    n.clone(),
+                    config.clone(),
+                    Arc::clone(&procs),
+                    p.clone(),
+                    w_rx,
+                );
+            }
+            if let (Some(cr), Some(cr_rx)) = (cron_restart, cron_shutdown_rx) {
+                crate::cron::spawn_cron_restart(n, cr, procs, p, cr_rx);
             }
         }
         Err(e) => {

@@ -468,10 +468,10 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~Integration: changes in ignored directories do NOT trigger restart~~
     - ~~Unit: glob pattern matching for ignore list~~
 
-35. Cron-based restart — parse cron expression, schedule restarts
-    - Unit: cron expression parsing (`"0 3 * * *"`, `"*/5 * * * *"`)
-    - Unit: next run time calculation
-    - Integration: cron triggers a restart at the scheduled time (use short interval for test)
+~~35. Cron-based restart — parse cron expression, schedule restarts~~
+    - ~~Unit: cron expression parsing (`"0 3 * * *"`, `"*/5 * * * *"`)~~
+    - ~~Unit: next run time calculation~~
+    - ~~Integration: cron triggers a restart at the scheduled time (use short interval for test)~~
 
 ### Phase 7 — Persistence
 36. State persistence — daemon writes state to `dump.json`, restores on startup

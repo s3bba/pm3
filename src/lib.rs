@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod client;
 pub mod config;
+pub mod cron;
 pub mod daemon;
 pub mod deps;
 pub mod env_file;
