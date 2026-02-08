@@ -509,14 +509,14 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - Integration: selecting a process shows its log output
     - Integration: logs auto-scroll as new lines appear
 
-43. TUI actions — start/stop/restart from TUI
-    - Integration: pressing action keys sends correct request to daemon
-    - Integration: process status updates in table after action
+~~43. TUI actions — start/stop/restart from TUI~~
+    - ~~Integration: pressing action keys sends correct request to daemon~~
+    - ~~Integration: process status updates in table after action~~
 
-44. TUI config editor — edit pm3.toml visually
-    - Integration: editor loads current pm3.toml content
-    - Integration: saving writes valid TOML back to file
-    - Integration: applying config changes restarts affected processes
+<!-- 44. TUI config editor — edit pm3.toml visually -->
+    <!-- - Integration: editor loads current pm3.toml content -->
+    <!-- - Integration: saving writes valid TOML back to file -->
+    <!-- - Integration: applying config changes restarts affected processes -->
 
 ### Phase 10 — Init, deploy, startup
 45. Init wizard — `pm3 init`, interactive prompts, scan for existing configs

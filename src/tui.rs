@@ -1,4 +1,5 @@
 use crate::client;
+use crate::config;
 use crate::paths::Paths;
 use crate::protocol::{ProcessInfo, ProcessStatus, Request, Response};
 use color_eyre::eyre::Context;
@@ -36,7 +37,7 @@ const ACCENT_DIM: Color = Color::DarkGray;
 const STATUS_GREEN: Color = Color::Green;
 const STATUS_YELLOW: Color = Color::Green;
 const STATUS_MAGENTA: Color = Color::Red;
-const STATUS_GRAY: Color = Color::DarkGray;
+const STATUS_GRAY: Color = Color::Yellow;
 const STATUS_RED: Color = Color::Red;
 
 const KEY_BG: Color = Color::Black;
@@ -59,7 +60,7 @@ pub fn run(paths: &Paths) -> color_eyre::Result<()> {
         if event::poll(timeout).context("failed to poll terminal events")?
             && let Event::Key(key) = event::read().context("failed to read terminal event")?
             && key.kind == KeyEventKind::Press
-            && handle_key_event(&mut app, key.code, key.modifiers)
+            && handle_key_event(&mut app, key.code, key.modifiers, paths)
         {
             break;
         }
@@ -74,7 +75,7 @@ pub fn run(paths: &Paths) -> color_eyre::Result<()> {
     Ok(())
 }
 
-fn handle_key_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bool {
+fn handle_key_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers, paths: &Paths) -> bool {
     match code {
         KeyCode::Char('q') | KeyCode::Esc => return true,
         KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return true,
@@ -82,6 +83,12 @@ fn handle_key_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bo
         KeyCode::Up | KeyCode::Char('k') => app.previous(),
         KeyCode::Home => app.first(),
         KeyCode::End => app.last(),
+        KeyCode::Char('s') => app.start_selected(paths),
+        KeyCode::Char('x') => app.stop_selected(paths),
+        KeyCode::Char('r') => app.restart_selected(paths),
+        KeyCode::Char('S') => app.start_all(paths),
+        KeyCode::Char('X') => app.stop_all(paths),
+        KeyCode::Char('R') => app.restart_all(paths),
         _ => {}
     }
     false
@@ -374,13 +381,32 @@ fn render_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(" quit ", label_style),
         Span::styled(" ↑↓ ", key_style),
         Span::styled(" move ", label_style),
-        Span::styled(" Home ", key_style),
-        Span::styled(" first ", label_style),
-        Span::styled(" End ", key_style),
-        Span::styled(" last ", label_style),
+        Span::styled(" s ", key_style),
+        Span::styled(" start ", label_style),
+        Span::styled(" x ", key_style),
+        Span::styled(" stop ", label_style),
+        Span::styled(" r ", key_style),
+        Span::styled(" restart ", label_style),
+        Span::styled(" S ", key_style),
+        Span::styled(" start all ", label_style),
+        Span::styled(" X ", key_style),
+        Span::styled(" stop all ", label_style),
+        Span::styled(" R ", key_style),
+        Span::styled(" restart all ", label_style),
     ];
 
-    if let Some(err) = &app.last_error {
+    if let Some((msg, is_success)) = app.active_status_message() {
+        let (fg, bg) = if is_success {
+            (FG_BRIGHT, STATUS_GREEN)
+        } else {
+            (FG_BRIGHT, STATUS_RED)
+        };
+        spans.push(Span::styled("  ", label_style));
+        spans.push(Span::styled(
+            format!(" {msg} "),
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+        ));
+    } else if let Some(err) = &app.last_error {
         spans.push(Span::styled("  ", label_style));
         spans.push(Span::styled(
             format!(" error: {err} "),
@@ -466,10 +492,18 @@ fn status_counts(processes: &[ProcessInfo]) -> StatusCounts {
     counts
 }
 
+fn load_configs() -> color_eyre::Result<std::collections::HashMap<String, config::ProcessConfig>> {
+    let config_path = std::env::current_dir()?.join("pm3.toml");
+    config::load_config(&config_path).map_err(|e| color_eyre::eyre::eyre!("{e}"))
+}
+
+const STATUS_MESSAGE_DURATION: Duration = Duration::from_secs(3);
+
 struct App {
     processes: Vec<ProcessInfo>,
     table_state: TableState,
     last_error: Option<String>,
+    status_message: Option<(String, bool, Instant)>, // (message, is_success, timestamp)
 }
 
 impl App {
@@ -478,6 +512,143 @@ impl App {
             processes: Vec::new(),
             table_state: TableState::default(),
             last_error: None,
+            status_message: None,
+        }
+    }
+
+    fn set_status(&mut self, message: String, is_success: bool) {
+        self.status_message = Some((message, is_success, Instant::now()));
+    }
+
+    fn active_status_message(&self) -> Option<(&str, bool)> {
+        self.status_message.as_ref().and_then(|(msg, ok, when)| {
+            if when.elapsed() < STATUS_MESSAGE_DURATION {
+                Some((msg.as_str(), *ok))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn start_selected(&mut self, paths: &Paths) {
+        let name = match self.selected_name() {
+            Some(n) => n.to_string(),
+            None => return,
+        };
+        let configs = match load_configs() {
+            Ok(c) => c,
+            Err(e) => {
+                self.set_status(format!("config error: {e}"), false);
+                return;
+            }
+        };
+        match client::send_request(
+            paths,
+            &Request::Start {
+                configs,
+                names: Some(vec![name.clone()]),
+                env: None,
+            },
+        ) {
+            Ok(Response::Success { .. }) => {
+                self.set_status(format!("started {name}"), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
+        }
+    }
+
+    fn stop_selected(&mut self, paths: &Paths) {
+        let name = match self.selected_name() {
+            Some(n) => n.to_string(),
+            None => return,
+        };
+        match client::send_request(
+            paths,
+            &Request::Stop {
+                names: Some(vec![name.clone()]),
+            },
+        ) {
+            Ok(Response::Success { .. }) => {
+                self.set_status(format!("stopped {name}"), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
+        }
+    }
+
+    fn restart_selected(&mut self, paths: &Paths) {
+        let name = match self.selected_name() {
+            Some(n) => n.to_string(),
+            None => return,
+        };
+        match client::send_request(
+            paths,
+            &Request::Restart {
+                names: Some(vec![name.clone()]),
+            },
+        ) {
+            Ok(Response::Success { .. }) => {
+                self.set_status(format!("restarted {name}"), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
+        }
+    }
+
+    fn start_all(&mut self, paths: &Paths) {
+        let configs = match load_configs() {
+            Ok(c) => c,
+            Err(e) => {
+                self.set_status(format!("config error: {e}"), false);
+                return;
+            }
+        };
+        match client::send_request(
+            paths,
+            &Request::Start {
+                configs,
+                names: None,
+                env: None,
+            },
+        ) {
+            Ok(Response::Success { .. }) => {
+                self.set_status("started all".to_string(), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
+        }
+    }
+
+    fn stop_all(&mut self, paths: &Paths) {
+        match client::send_request(paths, &Request::Stop { names: None }) {
+            Ok(Response::Success { .. }) => {
+                self.set_status("stopped all".to_string(), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
+        }
+    }
+
+    fn restart_all(&mut self, paths: &Paths) {
+        match client::send_request(paths, &Request::Restart { names: None }) {
+            Ok(Response::Success { .. }) => {
+                self.set_status("restarted all".to_string(), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
         }
     }
 
