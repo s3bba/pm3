@@ -8,8 +8,10 @@ chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 comfy-table = "7"
+crossterm = "0.27"
 dirs = "6"
 owo-colors = "4"
+ratatui = { version = "0.26", features = ["crossterm"] }
 nix = { version = "0.30", features = ["signal", "process"] }
 serde = { version = "1", features = ["derive"] }
 shell-words = "1"

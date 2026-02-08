@@ -28,6 +28,8 @@ pub enum Command {
     /// List all managed processes
     #[command(visible_alias = "view")]
     List,
+    /// Open interactive TUI
+    Tui,
     /// Stop all processes and shut down the daemon
     Kill,
     /// Reload process configuration
@@ -104,6 +106,12 @@ mod tests {
     fn test_kill() {
         let cli = Cli::try_parse_from(["pm3", "kill"]).unwrap();
         assert!(matches!(cli.command.unwrap(), Command::Kill));
+    }
+
+    #[test]
+    fn test_tui() {
+        let cli = Cli::try_parse_from(["pm3", "tui"]).unwrap();
+        assert!(matches!(cli.command.unwrap(), Command::Tui));
     }
 
     // Names handling

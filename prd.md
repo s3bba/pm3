@@ -485,25 +485,25 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~E2E: `pm3 kill`, then `pm3 resurrect` restarts all previously saved processes~~
     - ~~Integration: resurrect from a different directory works (snapshot stores absolute paths)~~
 
-### Phase 8 — Notifications
-38. Crash notifications (webhook) — POST JSON on crash/unhealthy
-    - Integration: start a mock HTTP server, configure webhook notify, crash process → mock receives POST
-    - Unit: notification payload contains process name, exit code, restart count, timestamp
-    - Integration: webhook failure doesn't block restart
+<!-- ### Phase 8 — Notifications -->
+<!-- 38. Crash notifications (webhook) — POST JSON on crash/unhealthy -->
+    <!-- - Integration: start a mock HTTP server, configure webhook notify, crash process → mock receives POST -->
+    <!-- - Unit: notification payload contains process name, exit code, restart count, timestamp -->
+    <!-- - Integration: webhook failure doesn't block restart -->
 
-39. Crash notifications (Telegram) — send via Telegram Bot API
-    - Unit: Telegram URL construction from `telegram://<token>@<chat_id>`
-    - Integration: mock Telegram API endpoint, verify correct request format
-    - Integration: Telegram failure doesn't block restart
+<!-- 39. Crash notifications (Telegram) — send via Telegram Bot API -->
+    <!-- - Unit: Telegram URL construction from `telegram://<token>@<chat_id>` -->
+    <!-- - Integration: mock Telegram API endpoint, verify correct request format -->
+    <!-- - Integration: Telegram failure doesn't block restart -->
 
-40. Crash notifications (desktop) — OS-level notification
-    - Unit: notification message formatting
-    - Integration: verify notification library is called on crash (mock/spy)
+<!-- 40. Crash notifications (desktop) — OS-level notification -->
+    <!-- - Unit: notification message formatting -->
+    <!-- - Integration: verify notification library is called on crash (mock/spy) -->
 
 ### Phase 9 — TUI
-41. Interactive TUI — process list panel with live status
-    - Integration: TUI renders process table with correct data from daemon
-    - Integration: table updates when process status changes
+~~41. Interactive TUI — process list panel with live status~~
+    - ~~Integration: TUI renders process table with correct data from daemon~~
+    - ~~Integration: table updates when process status changes~~
 
 42. TUI log viewer — view logs for selected process
     - Integration: selecting a process shows its log output

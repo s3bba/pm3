@@ -154,6 +154,55 @@ command = "sleep 999"
 }
 
 #[test]
+fn test_e2e_start_stopped_processes() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+    pm3(&data_dir, work_dir)
+        .args(["stop", "web"])
+        .assert()
+        .success();
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let web = processes
+        .iter()
+        .find(|p| p.name == "web")
+        .expect("web should appear in list");
+    assert_eq!(web.status, ProcessStatus::Stopped, "web should be stopped");
+
+    pm3(&data_dir, work_dir)
+        .args(["start", "web"])
+        .assert()
+        .success();
+
+    wait_until_online(&data_dir, work_dir, "web", 10);
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let web = processes
+        .iter()
+        .find(|p| p.name == "web")
+        .expect("web should appear in list");
+    assert_eq!(
+        web.status,
+        ProcessStatus::Online,
+        "web should be online after start"
+    );
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+#[test]
 fn test_e2e_stop_nonexistent_prints_error() {
     let dir = TempDir::new().unwrap();
     let work_dir = dir.path();

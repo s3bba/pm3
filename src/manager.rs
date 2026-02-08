@@ -143,12 +143,21 @@ impl Manager {
             {
                 let mut table = self.processes.write().await;
                 for name in level {
-                    if table.contains_key(name) {
-                        continue;
+                    let mut old_restarts = None;
+                    if let Some(existing) = table.get(name) {
+                        match existing.status {
+                            ProcessStatus::Stopped | ProcessStatus::Errored => {
+                                old_restarts = Some(existing.restarts);
+                            }
+                            _ => continue,
+                        }
                     }
                     let config = subset_configs.get(name).unwrap().clone();
                     match process::spawn_process(name.clone(), config.clone(), &self.paths).await {
-                        Ok((managed, child)) => {
+                        Ok((mut managed, child)) => {
+                            if let Some(previous) = old_restarts {
+                                managed.restarts = previous;
+                            }
                             let pid = managed.pid;
                             let shutdown_tx = managed
                                 .monitor_shutdown
