@@ -1,5 +1,5 @@
 [api]
-command = "python3 -m http.server 8080"
+command = "bun -e \"Bun.serve({ port: 8080, fetch() { return new Response('API') } })\""
 
 [worker]
 command = "bash -c 'i=0; while true; do i=$((i+1)); echo \"[worker] task #$i completed\"; sleep 2; done'"
@@ -8,4 +8,4 @@ command = "bash -c 'i=0; while true; do i=$((i+1)); echo \"[worker] task #$i com
 command = "bash -c 'while true; do echo \"$(date +%T) tick\"; echo \"$(date +%T) warning: something looks off\" >&2; sleep 3; done'"
 
 [docs]
-command = "python3 -m http.server 3000"
+command = "bun -e \"Bun.serve({ port: 3000, fetch() { return new Response('Docs') } })\""
