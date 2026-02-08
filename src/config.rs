@@ -1,5 +1,7 @@
+use crate::env_file;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +58,46 @@ pub struct ProcessConfig {
     pub cron_restart: Option<String>,
     pub log_date_format: Option<String>,
     pub environments: HashMap<String, HashMap<String, String>>,
+}
+
+impl ProcessConfig {
+    /// Merge a named environment into `env`. Returns true if applied.
+    pub fn apply_environment(&mut self, env_name: &str) -> bool {
+        let Some(env_vars) = self.environments.get(env_name) else {
+            return false;
+        };
+        let base = self.env.get_or_insert_with(HashMap::new);
+        for (k, v) in env_vars {
+            base.insert(k.clone(), v.clone());
+        }
+        true
+    }
+
+    /// Load env file variables, resolving relative paths against `cwd` when set.
+    pub fn load_env_files(&self) -> Result<HashMap<String, String>, env_file::EnvFileError> {
+        let mut env_file_vars = HashMap::new();
+        let Some(env_file) = &self.env_file else {
+            return Ok(env_file_vars);
+        };
+
+        for file_path in env_file.paths() {
+            let path = Path::new(file_path);
+            let resolved: PathBuf = if path.is_relative() {
+                if let Some(ref cwd) = self.cwd {
+                    PathBuf::from(cwd).join(path)
+                } else {
+                    path.to_path_buf()
+                }
+            } else {
+                path.to_path_buf()
+            };
+
+            let vars = env_file::load_env_file(&resolved)?;
+            env_file_vars.extend(vars);
+        }
+
+        Ok(env_file_vars)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -170,6 +212,8 @@ pub fn parse_config(content: &str) -> Result<HashMap<String, ProcessConfig>, Con
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use tempfile::tempdir;
 
     #[test]
     fn test_valid_toml_parses() {
@@ -428,5 +472,66 @@ DATABASE_URL = "postgres://staging/db"
             staging.get("DATABASE_URL").unwrap(),
             "postgres://staging/db"
         );
+    }
+
+    fn base_config() -> ProcessConfig {
+        ProcessConfig {
+            command: "echo hi".to_string(),
+            cwd: None,
+            env: None,
+            env_file: None,
+            health_check: None,
+            kill_timeout: None,
+            kill_signal: None,
+            max_restarts: None,
+            max_memory: None,
+            min_uptime: None,
+            stop_exit_codes: None,
+            watch: None,
+            watch_ignore: None,
+            depends_on: None,
+            restart: None,
+            group: None,
+            pre_start: None,
+            post_stop: None,
+            notify: None,
+            cron_restart: None,
+            log_date_format: None,
+            environments: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_apply_environment_merges() {
+        let input = r#"
+[web]
+command = "node server.js"
+env = { A = "1" }
+
+[web.env_prod]
+A = "2"
+B = "3"
+"#;
+        let mut configs = parse_config(input).unwrap();
+        let mut web = configs.remove("web").unwrap();
+        assert!(web.apply_environment("prod"));
+        let env = web.env.as_ref().unwrap();
+        assert_eq!(env.get("A").unwrap(), "2");
+        assert_eq!(env.get("B").unwrap(), "3");
+        assert!(!web.apply_environment("missing"));
+    }
+
+    #[test]
+    fn test_load_env_files_relative_to_cwd() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+        std::fs::write(&env_path, "FOO=bar\n").unwrap();
+
+        let mut config = base_config();
+        config.cwd = Some(dir.path().to_string_lossy().into_owned());
+        config.env_file = Some(EnvFile::Single(".env".to_string()));
+
+        let vars = config.load_env_files().unwrap();
+        assert_eq!(vars.get("FOO").unwrap(), "bar");
     }
 }

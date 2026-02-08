@@ -1,4 +1,3 @@
-use crate::health;
 use crate::paths::Paths;
 use crate::process::{self, ProcessError, ProcessTable};
 use crate::protocol::ProcessStatus;
@@ -194,69 +193,24 @@ pub fn spawn_memory_monitor(
             // Wait for handle_child_exit to mark process Stopped
             tokio::time::sleep(Duration::from_millis(200)).await;
 
-            // Spawn replacement process
-            let mut table = processes.write().await;
-            let managed = match table.get_mut(&name) {
-                Some(m) => m,
-                None => return,
-            };
-
-            match process::spawn_process(name.clone(), config.clone(), &paths).await {
-                Ok((mut new_managed, new_child)) => {
-                    new_managed.restarts = old_restarts + 1;
-                    let new_pid = new_managed.pid;
-                    let shutdown_rx = new_managed
-                        .monitor_shutdown
-                        .as_ref()
-                        .map(|tx| tx.subscribe())
-                        .unwrap();
-                    let health_shutdown_rx = config.health_check.as_ref().map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    let mem_shutdown_rx = config.max_memory.as_ref().map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    let health_check = config.health_check.clone();
-                    let max_memory = config.max_memory.clone();
-
-                    *managed = new_managed;
-
-                    // Drop lock before spawning tasks
-                    let procs = Arc::clone(&processes);
-                    let p = paths.clone();
-                    let n = name.clone();
-                    drop(table);
-
-                    process::spawn_monitor(
-                        n.clone(),
-                        new_child,
-                        new_pid,
-                        Arc::clone(&procs),
-                        p.clone(),
-                        shutdown_rx,
-                    );
-                    if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-                        health::spawn_health_checker(n.clone(), hc, Arc::clone(&procs), hc_rx);
-                    }
-                    if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
-                        spawn_memory_monitor(n, mm, procs, p, mm_rx);
-                    }
-
-                    // This monitor instance terminates; the new one takes over
-                    return;
-                }
+            // Spawn replacement process (and attach monitors)
+            match process::spawn_and_attach(
+                name.clone(),
+                config.clone(),
+                old_restarts + 1,
+                &processes,
+                &paths,
+            )
+            .await
+            {
+                Ok(()) => return, // This monitor instance terminates; the new one takes over
                 Err(e) => {
                     eprintln!("failed to restart '{name}' after memory limit: {e}");
-                    managed.status = ProcessStatus::Errored;
-                    managed.pid = None;
+                    let mut table = processes.write().await;
+                    if let Some(managed) = table.get_mut(&name) {
+                        managed.status = ProcessStatus::Errored;
+                        managed.pid = None;
+                    }
                     return;
                 }
             }

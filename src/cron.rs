@@ -1,9 +1,6 @@
-use crate::health;
-use crate::memory;
 use crate::paths::Paths;
 use crate::process::{self, ProcessTable};
 use crate::protocol::ProcessStatus;
-use crate::watch as file_watch;
 use chrono::Utc;
 use cron::Schedule;
 use std::str::FromStr;
@@ -118,94 +115,20 @@ pub fn spawn_cron_restart(
                 (cfg, restarts)
             };
 
-            // Spawn replacement
-            let mut table = processes.write().await;
-            match process::spawn_process(name.clone(), old_config.clone(), &paths).await {
-                Ok((mut new_managed, new_child)) => {
-                    new_managed.restarts = old_restarts + 1;
-                    let new_pid = new_managed.pid;
-                    let new_shutdown_rx = new_managed
-                        .monitor_shutdown
-                        .as_ref()
-                        .map(|tx| tx.subscribe())
-                        .unwrap();
-                    let health_shutdown_rx = old_config.health_check.as_ref().map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    let mem_shutdown_rx = old_config.max_memory.as_ref().map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    let watch_shutdown_rx = file_watch::resolve_watch_path(&old_config).map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    let cron_shutdown_rx = old_config.cron_restart.as_ref().map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    let health_check = old_config.health_check.clone();
-                    let max_memory = old_config.max_memory.clone();
-                    let cron_restart = old_config.cron_restart.clone();
-
-                    table.insert(name.clone(), new_managed);
-
-                    let procs = Arc::clone(&processes);
-                    let p = paths.clone();
-                    let n = name.clone();
-                    drop(table);
-
-                    process::spawn_monitor(
-                        n.clone(),
-                        new_child,
-                        new_pid,
-                        Arc::clone(&procs),
-                        p.clone(),
-                        new_shutdown_rx,
-                    );
-                    if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-                        health::spawn_health_checker(n.clone(), hc, Arc::clone(&procs), hc_rx);
-                    }
-                    if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
-                        memory::spawn_memory_monitor(
-                            n.clone(),
-                            mm,
-                            Arc::clone(&procs),
-                            p.clone(),
-                            mm_rx,
-                        );
-                    }
-                    if let Some(w_rx) = watch_shutdown_rx {
-                        file_watch::spawn_watcher(
-                            n.clone(),
-                            old_config.clone(),
-                            Arc::clone(&procs),
-                            p.clone(),
-                            w_rx,
-                        );
-                    }
-                    if let (Some(cr), Some(cr_rx)) = (cron_restart, cron_shutdown_rx) {
-                        spawn_cron_restart(n, cr, procs, p, cr_rx);
-                    }
-
-                    // This cron instance terminates; the new one takes over
-                    return;
-                }
+            // Spawn replacement (and attach monitors)
+            match process::spawn_and_attach(
+                name.clone(),
+                old_config.clone(),
+                old_restarts + 1,
+                &processes,
+                &paths,
+            )
+            .await
+            {
+                Ok(()) => return, // This cron instance terminates; the new one takes over
                 Err(e) => {
                     eprintln!("failed to restart '{}' on cron schedule: {}", name, e);
+                    let mut table = processes.write().await;
                     if let Some(managed) = table.get_mut(&name) {
                         managed.status = ProcessStatus::Errored;
                         managed.pid = None;

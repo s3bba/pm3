@@ -2,6 +2,7 @@ use crate::config::{ProcessConfig, RestartPolicy};
 use crate::log::{self, LogEntry, LogStream};
 use crate::paths::Paths;
 use crate::protocol::{ProcessDetail, ProcessInfo, ProcessStatus};
+use crate::{cron, health, memory, watch as file_watch};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -214,6 +215,53 @@ impl ManagedProcess {
 }
 
 // ---------------------------------------------------------------------------
+// Monitor helpers
+// ---------------------------------------------------------------------------
+
+pub fn spawn_aux_monitors(
+    name: String,
+    config: ProcessConfig,
+    processes: Arc<RwLock<ProcessTable>>,
+    paths: Paths,
+    shutdown_tx: watch::Sender<bool>,
+) {
+    if let Some(hc) = config.health_check.clone() {
+        health::spawn_health_checker(
+            name.clone(),
+            hc,
+            Arc::clone(&processes),
+            shutdown_tx.subscribe(),
+        );
+    }
+    if let Some(mm) = config.max_memory.clone() {
+        memory::spawn_memory_monitor(
+            name.clone(),
+            mm,
+            Arc::clone(&processes),
+            paths.clone(),
+            shutdown_tx.subscribe(),
+        );
+    }
+    // Watcher handles watch disabled internally
+    file_watch::spawn_watcher(
+        name.clone(),
+        config.clone(),
+        Arc::clone(&processes),
+        paths.clone(),
+        shutdown_tx.subscribe(),
+    );
+    if let Some(cr) = config.cron_restart.clone() {
+        cron::spawn_cron_restart(
+            name,
+            cr,
+            Arc::clone(&processes),
+            paths,
+            shutdown_tx.subscribe(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ProcessTable
 // ---------------------------------------------------------------------------
 
@@ -243,23 +291,10 @@ pub async fn spawn_process(
         cmd.current_dir(cwd);
     }
 
-    if let Some(ref env_file) = config.env_file {
-        let mut env_file_vars = HashMap::new();
-        for file_path in env_file.paths() {
-            let path = std::path::Path::new(file_path);
-            let resolved = if path.is_relative() {
-                if let Some(ref cwd) = config.cwd {
-                    std::path::PathBuf::from(cwd).join(path)
-                } else {
-                    path.to_path_buf()
-                }
-            } else {
-                path.to_path_buf()
-            };
-            let vars = crate::env_file::load_env_file(&resolved)
-                .map_err(|e| ProcessError::EnvFile(e.to_string()))?;
-            env_file_vars.extend(vars);
-        }
+    if config.env_file.is_some() {
+        let env_file_vars = config
+            .load_env_files()
+            .map_err(|e| ProcessError::EnvFile(e.to_string()))?;
         cmd.envs(&env_file_vars);
     }
 
@@ -324,6 +359,48 @@ pub async fn spawn_process(
     };
 
     Ok((managed, child))
+}
+
+/// Spawn a process, register it in the table, and attach monitors.
+pub async fn spawn_and_attach(
+    name: String,
+    config: ProcessConfig,
+    restarts: u32,
+    processes: &Arc<RwLock<ProcessTable>>,
+    paths: &Paths,
+) -> Result<(), ProcessError> {
+    let (mut managed, child) = spawn_process(name.clone(), config.clone(), paths).await?;
+    managed.restarts = restarts;
+
+    let pid = managed.pid;
+    let shutdown_tx = managed
+        .monitor_shutdown
+        .as_ref()
+        .expect("monitor shutdown sender missing")
+        .clone();
+    let shutdown_rx = shutdown_tx.subscribe();
+
+    {
+        let mut table = processes.write().await;
+        table.insert(name.clone(), managed);
+    }
+
+    spawn_monitor(
+        name.clone(),
+        child,
+        pid,
+        Arc::clone(processes),
+        paths.clone(),
+        shutdown_rx,
+    );
+    spawn_aux_monitors(
+        name,
+        config,
+        Arc::clone(processes),
+        paths.clone(),
+        shutdown_tx,
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -451,103 +528,32 @@ async fn handle_child_exit(
     let backoff = compute_backoff(restarts);
     tokio::time::sleep(backoff).await;
 
-    // Re-acquire lock and spawn new process
-    let mut table = processes.write().await;
-    let Some(managed) = table.get_mut(name) else {
-        return;
-    };
-
     // Re-check shutdown wasn't signaled while we were sleeping
-    if let Some(ref tx) = managed.monitor_shutdown
-        && *tx.borrow()
     {
-        managed.status = ProcessStatus::Stopped;
-        return;
+        let mut table = processes.write().await;
+        let Some(managed) = table.get_mut(name) else {
+            return;
+        };
+        if let Some(ref tx) = managed.monitor_shutdown
+            && *tx.borrow()
+        {
+            managed.status = ProcessStatus::Stopped;
+            return;
+        }
     }
 
-    match spawn_process(name.to_string(), config.clone(), paths).await {
-        Ok((mut new_managed, new_child)) => {
-            new_managed.restarts = restarts + 1;
-            let new_pid = new_managed.pid;
-            let shutdown_rx = new_managed
-                .monitor_shutdown
-                .as_ref()
-                .map(|tx| tx.subscribe())
-                .unwrap();
-            let health_shutdown_rx = config.health_check.as_ref().map(|_| {
-                new_managed
-                    .monitor_shutdown
-                    .as_ref()
-                    .map(|tx| tx.subscribe())
-                    .unwrap()
-            });
-            let mem_shutdown_rx = config.max_memory.as_ref().map(|_| {
-                new_managed
-                    .monitor_shutdown
-                    .as_ref()
-                    .map(|tx| tx.subscribe())
-                    .unwrap()
-            });
-            let watch_shutdown_rx = crate::watch::resolve_watch_path(&config).map(|_| {
-                new_managed
-                    .monitor_shutdown
-                    .as_ref()
-                    .map(|tx| tx.subscribe())
-                    .unwrap()
-            });
-            let cron_shutdown_rx = config.cron_restart.as_ref().map(|_| {
-                new_managed
-                    .monitor_shutdown
-                    .as_ref()
-                    .map(|tx| tx.subscribe())
-                    .unwrap()
-            });
-            let health_check = config.health_check.clone();
-            let max_memory = config.max_memory.clone();
-            let cron_restart = config.cron_restart.clone();
-
-            *managed = new_managed;
-
-            // Must drop the lock before spawning monitor (it needs lock access)
-            let procs = Arc::clone(processes);
-            let p = paths.clone();
-            let n = name.to_string();
-            drop(table);
-            spawn_monitor(
-                n.clone(),
-                new_child,
-                new_pid,
-                Arc::clone(&procs),
-                p.clone(),
-                shutdown_rx,
-            );
-            if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-                crate::health::spawn_health_checker(n.clone(), hc, Arc::clone(&procs), hc_rx);
-            }
-            if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
-                crate::memory::spawn_memory_monitor(
-                    n.clone(),
-                    mm,
-                    Arc::clone(&procs),
-                    p.clone(),
-                    mm_rx,
-                );
-            }
-            if let Some(w_rx) = watch_shutdown_rx {
-                crate::watch::spawn_watcher(
-                    n.clone(),
-                    config.clone(),
-                    Arc::clone(&procs),
-                    p.clone(),
-                    w_rx,
-                );
-            }
-            if let (Some(cr), Some(cr_rx)) = (cron_restart, cron_shutdown_rx) {
-                crate::cron::spawn_cron_restart(n, cr, procs, p, cr_rx);
-            }
-        }
-        Err(e) => {
-            eprintln!("failed to restart '{name}': {e}");
+    if let Err(e) = spawn_and_attach(
+        name.to_string(),
+        config.clone(),
+        restarts + 1,
+        processes,
+        paths,
+    )
+    .await
+    {
+        eprintln!("failed to restart '{name}': {e}");
+        let mut table = processes.write().await;
+        if let Some(managed) = table.get_mut(name) {
             managed.status = ProcessStatus::Errored;
             managed.pid = None;
         }

@@ -7,6 +7,7 @@ pub mod deps;
 pub mod env_file;
 pub mod health;
 pub mod log;
+pub mod manager;
 pub mod memory;
 pub mod paths;
 pub mod pid;

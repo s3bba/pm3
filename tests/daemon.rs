@@ -4113,16 +4113,17 @@ async fn test_cron_restart_triggers() {
     .await;
 
     // Get initial PID
-    let initial_pid;
+    let initial_pid: Option<u32>;
     loop {
         let resp = send_raw_request(&paths, &Request::List).await;
-        if let Response::ProcessList { processes } = resp {
-            if let Some(p) = processes.iter().find(|p| p.name == "cronproc") {
-                if p.pid.is_some() {
-                    initial_pid = p.pid;
-                    break;
-                }
-            }
+        if let Response::ProcessList { processes } = resp
+            && let Some(pid) = processes
+                .iter()
+                .find(|p| p.name == "cronproc")
+                .and_then(|p| p.pid)
+        {
+            initial_pid = Some(pid);
+            break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -4132,13 +4133,14 @@ async fn test_cron_restart_triggers() {
     for _ in 0..40 {
         tokio::time::sleep(Duration::from_millis(250)).await;
         let resp = send_raw_request(&paths, &Request::List).await;
-        if let Response::ProcessList { processes } = resp {
-            if let Some(p) = processes.iter().find(|p| p.name == "cronproc") {
-                if p.restarts >= 1 && p.pid != initial_pid && p.status == ProcessStatus::Online {
-                    restarted = true;
-                    break;
-                }
-            }
+        if let Response::ProcessList { processes } = resp
+            && let Some(p) = processes.iter().find(|p| p.name == "cronproc")
+            && p.restarts >= 1
+            && p.pid != initial_pid
+            && p.status == ProcessStatus::Online
+        {
+            restarted = true;
+            break;
         }
     }
     assert!(restarted, "cron_restart should trigger a restart");

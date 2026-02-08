@@ -7,7 +7,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 fn pm3(data_dir: &Path, work_dir: &Path) -> Command {
-    let mut cmd: Command = cargo_bin_cmd!("pm3").into();
+    let mut cmd: Command = cargo_bin_cmd!("pm3");
     cmd.env("PM3_DATA_DIR", data_dir);
     cmd.current_dir(work_dir);
     cmd.timeout(Duration::from_secs(30));
@@ -48,10 +48,10 @@ fn wait_until_online(data_dir: &Path, work_dir: &Path, name: &str, timeout_secs:
     let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
         let processes = get_process_list(data_dir, work_dir);
-        if let Some(p) = processes.iter().find(|p| p.name == name) {
-            if p.status == ProcessStatus::Online {
-                return;
-            }
+        if let Some(p) = processes.iter().find(|p| p.name == name)
+            && p.status == ProcessStatus::Online
+        {
+            return;
         }
         if std::time::Instant::now() >= deadline {
             panic!("timeout waiting for '{name}' to become online");

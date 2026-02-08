@@ -1,6 +1,4 @@
 use crate::config::{ProcessConfig, Watch};
-use crate::health;
-use crate::memory;
 use crate::paths::Paths;
 use crate::process::{self, ProcessTable};
 use crate::protocol::ProcessStatus;
@@ -202,74 +200,23 @@ pub fn spawn_watcher(
                 (cfg, restarts)
             };
 
-            // Spawn replacement
-            let mut table = processes.write().await;
-            match process::spawn_process(name.clone(), old_config.clone(), &paths).await {
-                Ok((mut new_managed, new_child)) => {
-                    new_managed.restarts = old_restarts + 1;
-                    let new_pid = new_managed.pid;
-                    let new_shutdown_rx = new_managed
-                        .monitor_shutdown
-                        .as_ref()
-                        .map(|tx| tx.subscribe())
-                        .unwrap();
-                    let health_shutdown_rx = old_config.health_check.as_ref().map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    let mem_shutdown_rx = old_config.max_memory.as_ref().map(|_| {
-                        new_managed
-                            .monitor_shutdown
-                            .as_ref()
-                            .map(|tx| tx.subscribe())
-                            .unwrap()
-                    });
-                    let watch_shutdown_rx = new_managed
-                        .monitor_shutdown
-                        .as_ref()
-                        .map(|tx| tx.subscribe())
-                        .unwrap();
-                    let health_check = old_config.health_check.clone();
-                    let max_memory = old_config.max_memory.clone();
-
-                    table.insert(name.clone(), new_managed);
-
-                    let procs = Arc::clone(&processes);
-                    let p = paths.clone();
-                    let n = name.clone();
-                    drop(table);
-
-                    process::spawn_monitor(
-                        n.clone(),
-                        new_child,
-                        new_pid,
-                        Arc::clone(&procs),
-                        p.clone(),
-                        new_shutdown_rx,
-                    );
-                    if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-                        health::spawn_health_checker(n.clone(), hc, Arc::clone(&procs), hc_rx);
-                    }
-                    if let (Some(mm), Some(mm_rx)) = (max_memory, mem_shutdown_rx) {
-                        memory::spawn_memory_monitor(
-                            n.clone(),
-                            mm,
-                            Arc::clone(&procs),
-                            p.clone(),
-                            mm_rx,
-                        );
-                    }
-                    // Spawn new watcher for the replacement
-                    spawn_watcher(n, old_config, procs, p, watch_shutdown_rx);
-
+            // Spawn replacement (this will also attach monitors including a new watcher)
+            match process::spawn_and_attach(
+                name.clone(),
+                old_config.clone(),
+                old_restarts + 1,
+                &processes,
+                &paths,
+            )
+            .await
+            {
+                Ok(()) => {
                     // This watcher instance terminates; the new one takes over
                     return;
                 }
                 Err(e) => {
                     eprintln!("failed to restart '{}' after file change: {}", name, e);
+                    let mut table = processes.write().await;
                     if let Some(managed) = table.get_mut(&name) {
                         managed.status = ProcessStatus::Errored;
                         managed.pid = None;
