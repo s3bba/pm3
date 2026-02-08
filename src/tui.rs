@@ -8,15 +8,39 @@ use crossterm::terminal::{
 };
 use crossterm::{cursor, execute};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::terminal::{Frame, Terminal};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState, block::Padding,
+};
 use std::io;
 use std::time::{Duration, Instant};
 
 const TICK_RATE: Duration = Duration::from_millis(1000);
+
+// ── Color palette (cyan / green / red) ───────────────────────────────
+const BG_BASE: Color = Color::Reset;
+const BG_SURFACE: Color = Color::Reset;
+const BG_HIGHLIGHT: Color = Color::DarkGray;
+
+const FG_DIM: Color = Color::DarkGray;
+const FG_MUTED: Color = Color::DarkGray;
+const FG_TEXT: Color = Color::White;
+const FG_BRIGHT: Color = Color::White;
+
+const ACCENT: Color = Color::Green;
+const ACCENT_DIM: Color = Color::DarkGray;
+
+const STATUS_GREEN: Color = Color::Green;
+const STATUS_YELLOW: Color = Color::Green;
+const STATUS_MAGENTA: Color = Color::Red;
+const STATUS_GRAY: Color = Color::DarkGray;
+const STATUS_RED: Color = Color::Red;
+
+const KEY_BG: Color = Color::Black;
+const KEY_FG: Color = Color::Green;
 
 pub fn run(paths: &Paths) -> color_eyre::Result<()> {
     let _guard = TerminalGuard::new()?;
@@ -64,53 +88,153 @@ fn handle_key_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bo
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
+    let terminal_width = f.size().width;
+
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(10),
-            Constraint::Min(7),
-            Constraint::Length(1),
+            Constraint::Length(3), // header card
+            Constraint::Length(1), // spacer
+            Constraint::Min(5),    // table
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // footer
         ])
         .split(f.size());
 
-    let header = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(layout[0]);
+    render_header(f, app, layout[0]);
 
-    let banner = banner_widget(app);
-    f.render_widget(banner, header[0]);
+    let spacer = Paragraph::new("").style(Style::default().bg(BG_BASE));
+    f.render_widget(spacer.clone(), layout[1]);
+    f.render_widget(spacer, layout[3]);
 
-    let header_body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(36), Constraint::Min(20)])
-        .split(header[1]);
+    render_table(f, app, layout[2], terminal_width);
+    render_footer(f, app, layout[4]);
+}
 
-    f.render_widget(logo_widget(), header_body[0]);
+fn render_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let (dot, dot_label) = if app.last_error.is_some() {
+        (
+            Span::styled("● ", Style::default().fg(STATUS_RED)),
+            Span::styled(
+                "disconnected",
+                Style::default().fg(STATUS_RED).add_modifier(Modifier::BOLD),
+            ),
+        )
+    } else {
+        (
+            Span::styled("● ", Style::default().fg(STATUS_GREEN)),
+            Span::styled(
+                "connected",
+                Style::default()
+                    .fg(STATUS_GREEN)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+    };
+
+    let banner_line = Line::from(vec![
+        Span::styled(
+            " PM3 ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ─ ", Style::default().fg(FG_DIM)),
+        Span::styled("daemon: ", Style::default().fg(FG_MUTED)),
+        dot,
+        dot_label,
+        Span::styled(" ─ ", Style::default().fg(FG_DIM)),
+        Span::styled("processes: ", Style::default().fg(FG_MUTED)),
+        Span::styled(
+            app.processes.len().to_string(),
+            Style::default().fg(FG_TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ─ ", Style::default().fg(FG_DIM)),
+        Span::styled("refresh 1s", Style::default().fg(FG_DIM)),
+    ]);
+
     let counts = status_counts(&app.processes);
-    let summary = status_widget(app, &counts);
-    f.render_widget(summary, header_body[1]);
+    let label = Style::default().fg(FG_DIM);
+    let val = |color: Color| Style::default().fg(color).add_modifier(Modifier::BOLD);
 
-    let main = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-        .split(layout[1]);
+    let status_line = Line::from(vec![
+        Span::styled(" ", label),
+        status_dot(ProcessStatus::Online),
+        Span::styled("online: ", label),
+        Span::styled(counts.online.to_string(), val(STATUS_GREEN)),
+        Span::styled("   ", label),
+        status_dot(ProcessStatus::Starting),
+        Span::styled("starting: ", label),
+        Span::styled(counts.starting.to_string(), val(STATUS_YELLOW)),
+        Span::styled("   ", label),
+        status_dot(ProcessStatus::Unhealthy),
+        Span::styled("unhealthy: ", label),
+        Span::styled(counts.unhealthy.to_string(), val(STATUS_MAGENTA)),
+        Span::styled("   ", label),
+        status_dot(ProcessStatus::Stopped),
+        Span::styled("stopped: ", label),
+        Span::styled(counts.stopped.to_string(), val(STATUS_GRAY)),
+        Span::styled("   ", label),
+        status_dot(ProcessStatus::Errored),
+        Span::styled("errored: ", label),
+        Span::styled(counts.errored.to_string(), val(STATUS_RED)),
+        Span::styled("   ", label),
+        Span::styled("total: ", label),
+        Span::styled(
+            app.processes.len().to_string(),
+            Style::default().fg(FG_TEXT).add_modifier(Modifier::BOLD),
+        ),
+    ]);
 
-    let header = Row::new(vec![
-        Cell::from("name"),
-        Cell::from("pid"),
-        Cell::from("status"),
-        Cell::from("uptime"),
-        Cell::from("restarts"),
-        Cell::from("cpu"),
-        Cell::from("mem"),
-    ])
-    .style(
-        Style::default()
-            .fg(Color::White)
-            .bg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD),
-    );
+    let header_text = Text::from(vec![banner_line, Line::from(""), status_line]);
+    let header = Paragraph::new(header_text).style(Style::default().bg(BG_SURFACE));
+    f.render_widget(header, area);
+}
+
+fn status_dot(status: ProcessStatus) -> Span<'static> {
+    let color = match status {
+        ProcessStatus::Online => STATUS_GREEN,
+        ProcessStatus::Starting => STATUS_YELLOW,
+        ProcessStatus::Unhealthy => STATUS_MAGENTA,
+        ProcessStatus::Stopped => STATUS_GRAY,
+        ProcessStatus::Errored => STATUS_RED,
+    };
+    Span::styled("● ", Style::default().fg(color))
+}
+
+fn render_table(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect, terminal_width: u16) {
+    let selected_idx = app.table_state.selected();
+
+    // Determine column layout based on terminal width
+    let is_wide = terminal_width >= 100;
+    let is_medium = terminal_width >= 70;
+
+    let header_cells: Vec<Cell> = if is_wide {
+        vec![
+            Cell::from(Line::from("NAME")),
+            Cell::from(Line::from("PID").alignment(Alignment::Right)),
+            Cell::from(Line::from("STATUS")),
+            Cell::from(Line::from("UPTIME")),
+            Cell::from(Line::from("RESTARTS").alignment(Alignment::Right)),
+            Cell::from(Line::from("CPU").alignment(Alignment::Right)),
+            Cell::from(Line::from("MEM").alignment(Alignment::Right)),
+        ]
+    } else if is_medium {
+        vec![
+            Cell::from(Line::from("NAME")),
+            Cell::from(Line::from("PID").alignment(Alignment::Right)),
+            Cell::from(Line::from("STATUS")),
+            Cell::from(Line::from("UPTIME")),
+            Cell::from(Line::from("RESTARTS").alignment(Alignment::Right)),
+        ]
+    } else {
+        vec![
+            Cell::from(Line::from("NAME")),
+            Cell::from(Line::from("STATUS")),
+            Cell::from(Line::from("UPTIME")),
+        ]
+    };
+
+    let header =
+        Row::new(header_cells).style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD));
 
     let rows = app.processes.iter().enumerate().map(|(idx, p)| {
         let pid = p
@@ -121,266 +245,164 @@ fn ui(f: &mut Frame, app: &mut App) {
         let restarts = p.restarts.to_string();
         let cpu = format_cpu(p.cpu_percent);
         let mem = format_memory(p.memory_bytes);
-        let status = p.status.to_string();
 
         let restarts_style = if p.restarts > 0 {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(STATUS_YELLOW)
         } else {
-            Style::default()
+            Style::default().fg(FG_TEXT)
         };
 
-        let row_style = if idx % 2 == 0 {
-            Style::default()
+        let is_selected = selected_idx == Some(idx);
+        let row_bg = if is_selected {
+            BG_HIGHLIGHT
+        } else if idx % 2 == 0 {
+            BG_BASE
         } else {
-            Style::default().bg(Color::Rgb(18, 18, 18))
+            BG_SURFACE
+        };
+        let row_fg = if is_selected { FG_BRIGHT } else { FG_TEXT };
+
+        let name_display = if is_selected {
+            format!("▸ {}", p.name)
+        } else {
+            format!("  {}", p.name)
         };
 
-        Row::new(vec![
-            Cell::from(p.name.clone()).style(Style::default().fg(Color::Cyan)),
-            Cell::from(pid),
-            Cell::from(status).style(status_style(p.status)),
-            Cell::from(uptime),
-            Cell::from(restarts).style(restarts_style),
-            Cell::from(cpu),
-            Cell::from(mem),
-        ])
-        .style(row_style)
+        let status_line = Line::from(vec![
+            status_dot(p.status),
+            Span::styled(p.status.to_string(), status_style(p.status)),
+        ]);
+
+        let cells: Vec<Cell> = if is_wide {
+            vec![
+                Cell::from(Line::from(Span::styled(
+                    name_display,
+                    Style::default().fg(ACCENT),
+                ))),
+                Cell::from(Line::from(pid).alignment(Alignment::Right)),
+                Cell::from(status_line),
+                Cell::from(Line::from(uptime)),
+                Cell::from(
+                    Line::from(Span::styled(restarts, restarts_style)).alignment(Alignment::Right),
+                ),
+                Cell::from(Line::from(cpu).alignment(Alignment::Right)),
+                Cell::from(Line::from(mem).alignment(Alignment::Right)),
+            ]
+        } else if is_medium {
+            vec![
+                Cell::from(Line::from(Span::styled(
+                    name_display,
+                    Style::default().fg(ACCENT),
+                ))),
+                Cell::from(Line::from(pid).alignment(Alignment::Right)),
+                Cell::from(status_line),
+                Cell::from(Line::from(uptime)),
+                Cell::from(
+                    Line::from(Span::styled(restarts, restarts_style)).alignment(Alignment::Right),
+                ),
+            ]
+        } else {
+            vec![
+                Cell::from(Line::from(Span::styled(
+                    name_display,
+                    Style::default().fg(ACCENT),
+                ))),
+                Cell::from(status_line),
+                Cell::from(Line::from(uptime)),
+            ]
+        };
+
+        Row::new(cells).style(Style::default().bg(row_bg).fg(row_fg))
     });
 
-    let widths = [
-        Constraint::Min(14),
-        Constraint::Length(7),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Length(9),
-        Constraint::Length(8),
-        Constraint::Length(10),
-    ];
+    let widths: Vec<Constraint> = if is_wide {
+        vec![
+            Constraint::Percentage(25),
+            Constraint::Length(8),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Length(8),
+            Constraint::Length(10),
+        ]
+    } else if is_medium {
+        vec![
+            Constraint::Min(16),
+            Constraint::Length(8),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(9),
+        ]
+    } else {
+        vec![
+            Constraint::Min(16),
+            Constraint::Length(12),
+            Constraint::Length(10),
+        ]
+    };
 
-    let title = format!("Processes ({})", app.processes.len());
+    let title = format!(" Processes ({}) ", app.processes.len());
     let table = Table::new(rows, widths)
         .header(header)
         .block(
             Block::default()
-                .title(title)
+                .title(Span::styled(
+                    title,
+                    Style::default().fg(FG_TEXT).add_modifier(Modifier::BOLD),
+                ))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT_DIM))
+                .padding(Padding::horizontal(1)),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::LightBlue)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("> ");
+        .highlight_style(Style::default())
+        .highlight_symbol("");
 
-    f.render_stateful_widget(table, main[0], &mut app.table_state);
-    let details = details_widget(app.selected_process());
-    f.render_widget(details, main[1]);
-
-    let footer = if let Some(err) = &app.last_error {
-        format!("q quit | ↑/↓ move | error: {err}")
-    } else {
-        "q quit | ↑/↓ move".to_string()
-    };
-    let footer = Paragraph::new(footer)
-        .block(Block::default().borders(Borders::TOP))
-        .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(footer, layout[2]);
+    f.render_stateful_widget(table, area, &mut app.table_state);
 }
 
-fn banner_widget(app: &App) -> Paragraph<'static> {
-    let bar_style = Style::default().bg(Color::DarkGray).fg(Color::White);
-    let status_style = if app.last_error.is_some() {
-        Style::default().bg(Color::DarkGray).fg(Color::Red)
-    } else {
-        Style::default().bg(Color::DarkGray).fg(Color::Green)
-    };
-    let status_label = if app.last_error.is_some() {
-        "disconnected"
-    } else {
-        "connected"
-    };
-
-    let line = Line::from(vec![
-        Span::styled(" PM3 TUI ", bar_style.add_modifier(Modifier::BOLD)),
-        Span::styled(" | ", bar_style),
-        Span::styled("processes: ", bar_style),
-        Span::styled(app.processes.len().to_string(), bar_style),
-        Span::styled(" | ", bar_style),
-        Span::styled("daemon: ", bar_style),
-        Span::styled(status_label, status_style.add_modifier(Modifier::BOLD)),
-        Span::styled(" | refresh 1s | q quit ", bar_style),
-    ]);
-
-    Paragraph::new(Text::from(line))
-        .block(Block::default())
-        .style(bar_style)
-}
-
-fn logo_widget() -> Paragraph<'static> {
-    let main_style = Style::default()
-        .fg(Color::LightCyan)
+fn render_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let key_style = Style::default()
+        .fg(KEY_FG)
+        .bg(KEY_BG)
         .add_modifier(Modifier::BOLD);
-    let shadow_style = Style::default().fg(Color::DarkGray);
-    let accent = Style::default().fg(Color::LightBlue);
+    let label_style = Style::default().fg(FG_DIM);
 
-    let logo = [
-        " ____   __  __  _____ ",
-        "|  _ \\ |  \\/  ||___ / ",
-        "| |_) || |\\/| |  |_ \\ ",
-        "|  __/ | |  | | ___) |",
-        "|_|    |_|  |_||____/ ",
+    let mut spans = vec![
+        Span::styled(" ", label_style),
+        Span::styled(" q ", key_style),
+        Span::styled(" quit ", label_style),
+        Span::styled(" ↑↓ ", key_style),
+        Span::styled(" move ", label_style),
+        Span::styled(" Home ", key_style),
+        Span::styled(" first ", label_style),
+        Span::styled(" End ", key_style),
+        Span::styled(" last ", label_style),
     ];
 
-    let mut lines = Vec::with_capacity(logo.len() + 1);
-    for line in logo {
-        let shadow = shadow_line(line);
-        lines.push(Line::from(vec![
-            Span::styled(line, main_style),
-            Span::raw(" "),
-            Span::styled(shadow, shadow_style),
-        ]));
-    }
-    lines.push(Line::from(Span::styled("    process manager", accent)));
-
-    Paragraph::new(Text::from(lines)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    )
-}
-
-fn status_widget(app: &App, counts: &StatusCounts) -> Paragraph<'static> {
-    let label_style = Style::default().fg(Color::Gray);
-    let value_style = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
-
-    let lines = vec![
-        Line::from(Span::styled(
-            "LIVE STATUS",
+    if let Some(err) = &app.last_error {
+        spans.push(Span::styled("  ", label_style));
+        spans.push(Span::styled(
+            format!(" error: {err} "),
             Style::default()
-                .fg(Color::LightBlue)
+                .fg(FG_BRIGHT)
+                .bg(STATUS_RED)
                 .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        status_line("online", counts.online, status_style(ProcessStatus::Online)),
-        status_line(
-            "starting",
-            counts.starting,
-            status_style(ProcessStatus::Starting),
-        ),
-        status_line(
-            "unhealthy",
-            counts.unhealthy,
-            status_style(ProcessStatus::Unhealthy),
-        ),
-        status_line(
-            "stopped",
-            counts.stopped,
-            status_style(ProcessStatus::Stopped),
-        ),
-        status_line(
-            "errored",
-            counts.errored,
-            status_style(ProcessStatus::Errored),
-        ),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("total", label_style),
-            Span::raw("  "),
-            Span::styled(app.processes.len().to_string(), value_style),
-        ]),
-    ];
-
-    Paragraph::new(Text::from(lines)).block(
-        Block::default()
-            .title("Summary")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    )
-}
-
-fn status_line(label: &'static str, count: usize, style: Style) -> Line<'static> {
-    let label_style = Style::default().fg(Color::Gray);
-    let value_style = style.add_modifier(Modifier::BOLD);
-    let label_padded = format!("{label:<10}");
-    Line::from(vec![
-        Span::styled(label_padded, label_style),
-        Span::raw("  "),
-        Span::styled(count.to_string(), value_style),
-    ])
-}
-
-fn details_widget(selected: Option<&ProcessInfo>) -> Paragraph<'static> {
-    let label_style = Style::default().fg(Color::Gray);
-    let mut lines = Vec::new();
-
-    if let Some(p) = selected {
-        lines.push(Line::from(vec![
-            Span::styled("name ", label_style),
-            Span::styled(p.name.clone(), Style::default().fg(Color::Cyan)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("status ", label_style),
-            Span::styled(p.status.to_string(), status_style(p.status)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("pid ", label_style),
-            Span::raw(
-                p.pid
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("uptime ", label_style),
-            Span::raw(format_uptime(p.uptime)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("restarts ", label_style),
-            Span::raw(p.restarts.to_string()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("cpu ", label_style),
-            Span::raw(format_cpu(p.cpu_percent)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("mem ", label_style),
-            Span::raw(format_memory(p.memory_bytes)),
-        ]));
-        if let Some(group) = &p.group {
-            lines.push(Line::from(vec![
-                Span::styled("group ", label_style),
-                Span::raw(group.clone()),
-            ]));
-        }
-    } else {
-        lines.push(Line::from(Span::styled("no process selected", label_style)));
+        ));
     }
 
-    Paragraph::new(Text::from(lines)).block(
-        Block::default()
-            .title("Selected")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    )
-}
-
-fn shadow_line(line: &str) -> String {
-    line.chars()
-        .map(|ch| if ch == ' ' { ' ' } else { '.' })
-        .collect()
+    let line = Line::from(spans);
+    let footer = Paragraph::new(Text::from(line)).style(Style::default().bg(BG_BASE));
+    f.render_widget(footer, area);
 }
 
 fn status_style(status: ProcessStatus) -> Style {
     match status {
-        ProcessStatus::Online => Style::default().fg(Color::Green),
-        ProcessStatus::Starting => Style::default().fg(Color::Yellow),
-        ProcessStatus::Unhealthy => Style::default().fg(Color::Magenta),
-        ProcessStatus::Stopped => Style::default().fg(Color::Gray),
-        ProcessStatus::Errored => Style::default().fg(Color::Red),
+        ProcessStatus::Online => Style::default().fg(STATUS_GREEN),
+        ProcessStatus::Starting => Style::default().fg(STATUS_YELLOW),
+        ProcessStatus::Unhealthy => Style::default().fg(STATUS_MAGENTA),
+        ProcessStatus::Stopped => Style::default().fg(STATUS_GRAY),
+        ProcessStatus::Errored => Style::default().fg(STATUS_RED),
     }
 }
 
@@ -503,12 +525,6 @@ impl App {
             .selected()
             .and_then(|idx| self.processes.get(idx))
             .map(|p| p.name.as_str())
-    }
-
-    fn selected_process(&self) -> Option<&ProcessInfo> {
-        self.table_state
-            .selected()
-            .and_then(|idx| self.processes.get(idx))
     }
 
     fn next(&mut self) {
