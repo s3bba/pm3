@@ -21,6 +21,7 @@ pub const DEFAULT_MAX_RESTARTS: u32 = 15;
 pub const BACKOFF_BASE_MS: u64 = 100;
 pub const BACKOFF_CAP_MS: u64 = 30_000;
 pub const DEFAULT_MIN_UPTIME_MS: u64 = 1000;
+pub const SPAWN_VERIFY_DELAY_MS: u64 = 50;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -40,6 +41,8 @@ pub enum ProcessError {
     EnvFile(String),
     #[error("hook failed: {0}")]
     HookFailed(String),
+    #[error("process exited immediately (exit code: {exit_code:?})")]
+    ImmediateExit { exit_code: Option<i32> },
 }
 
 // ---------------------------------------------------------------------------
@@ -341,10 +344,35 @@ pub async fn spawn_process(
         );
     }
 
-    let status = if config.health_check.is_some() {
-        ProcessStatus::Starting
-    } else {
-        ProcessStatus::Online
+    // Brief delay to let immediately-failing processes exit
+    tokio::time::sleep(Duration::from_millis(SPAWN_VERIFY_DELAY_MS)).await;
+
+    let status = match child.try_wait() {
+        Ok(Some(exit_status)) => {
+            // Process already exited
+            let exit_code = exit_status.code();
+            if exit_code != Some(0) {
+                return Err(ProcessError::ImmediateExit { exit_code });
+            }
+            // Exited with code 0 — completed successfully
+            ProcessStatus::Stopped
+        }
+        Ok(None) => {
+            // Still running
+            if config.health_check.is_some() {
+                ProcessStatus::Starting
+            } else {
+                ProcessStatus::Online
+            }
+        }
+        Err(_) => {
+            // Cannot query status, assume running
+            if config.health_check.is_some() {
+                ProcessStatus::Starting
+            } else {
+                ProcessStatus::Online
+            }
+        }
     };
 
     let managed = ManagedProcess {

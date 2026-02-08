@@ -1622,3 +1622,40 @@ cwd = "{}"
 
     kill_daemon(&data_dir, &other_dir);
 }
+
+// ---------------------------------------------------------------------------
+// Immediate exit detection
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_e2e_start_immediate_exit_reports_error() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[failing]
+command = "sh -c 'exit 1'"
+"#,
+    )
+    .unwrap();
+
+    let output = pm3(&data_dir, work_dir)
+        .args(["--json", "start"])
+        .output()
+        .unwrap();
+    let response = parse_json_response(&output);
+    match response {
+        Response::Error { message } => {
+            assert!(
+                message.contains("exited immediately"),
+                "error should contain 'exited immediately', got: {message}"
+            );
+        }
+        other => panic!("expected Error response for immediate exit, got: {other:?}"),
+    }
+
+    kill_daemon(&data_dir, work_dir);
+}
