@@ -17,6 +17,7 @@ use tokio::sync::{RwLock, watch};
 pub struct Manager {
     paths: Paths,
     processes: Arc<RwLock<ProcessTable>>,
+    stats_cache: Arc<RwLock<memory::StatsCache>>,
 }
 
 impl Manager {
@@ -24,6 +25,7 @@ impl Manager {
         Self {
             paths,
             processes: Arc::new(RwLock::new(HashMap::new())),
+            stats_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -33,6 +35,10 @@ impl Manager {
 
     pub fn processes(&self) -> Arc<RwLock<ProcessTable>> {
         Arc::clone(&self.processes)
+    }
+
+    pub fn stats_cache(&self) -> Arc<RwLock<memory::StatsCache>> {
+        Arc::clone(&self.stats_cache)
     }
 
     pub async fn shutdown_all(&self) {
@@ -76,7 +82,8 @@ impl Manager {
 
     pub async fn list(&self) -> Response {
         let table = self.processes.read().await;
-        let infos: Vec<_> = table.values().map(|m| m.to_process_info()).collect();
+        let cache = self.stats_cache.read().await;
+        let infos: Vec<_> = table.values().map(|m| m.to_process_info(&cache)).collect();
         Response::ProcessList { processes: infos }
     }
 
@@ -900,9 +907,10 @@ impl Manager {
 
     pub async fn info(&self, name: String) -> Response {
         let table = self.processes.read().await;
+        let cache = self.stats_cache.read().await;
         match table.get(&name) {
             Some(managed) => {
-                let detail = managed.to_process_detail(&self.paths);
+                let detail = managed.to_process_detail(&self.paths, &cache);
                 Response::ProcessDetail {
                     info: Box::new(detail),
                 }

@@ -137,28 +137,34 @@ pub struct ManagedProcess {
 }
 
 impl ManagedProcess {
-    pub fn to_process_info(&self) -> ProcessInfo {
+    pub fn to_process_info(&self, stats_cache: &memory::StatsCache) -> ProcessInfo {
+        let stats = self.pid.and_then(|pid| stats_cache.get(&pid));
         ProcessInfo {
             name: self.name.clone(),
             pid: self.pid,
             status: self.status,
             uptime: Some(self.started_at.elapsed().as_secs()),
             restarts: self.restarts,
-            cpu_percent: None,
-            memory_bytes: None,
+            cpu_percent: stats.and_then(|s| s.cpu_percent),
+            memory_bytes: stats.and_then(|s| s.memory_bytes),
             group: self.config.group.clone(),
         }
     }
 
-    pub fn to_process_detail(&self, paths: &Paths) -> ProcessDetail {
+    pub fn to_process_detail(
+        &self,
+        paths: &Paths,
+        stats_cache: &memory::StatsCache,
+    ) -> ProcessDetail {
+        let stats = self.pid.and_then(|pid| stats_cache.get(&pid));
         ProcessDetail {
             name: self.name.clone(),
             pid: self.pid,
             status: self.status,
             uptime: Some(self.started_at.elapsed().as_secs()),
             restarts: self.restarts,
-            cpu_percent: None,
-            memory_bytes: None,
+            cpu_percent: stats.and_then(|s| s.cpu_percent),
+            memory_bytes: stats.and_then(|s| s.memory_bytes),
             group: self.config.group.clone(),
             command: self.config.command.clone(),
             cwd: self.config.cwd.clone(),

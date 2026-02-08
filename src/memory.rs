@@ -1,6 +1,7 @@
 use crate::paths::Paths;
 use crate::process::{self, ProcessError, ProcessTable};
 use crate::protocol::ProcessStatus;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, watch};
@@ -10,6 +11,7 @@ use tokio::sync::{RwLock, watch};
 // ---------------------------------------------------------------------------
 
 pub const MEMORY_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+pub const STATS_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -72,6 +74,87 @@ pub async fn read_rss_bytes(pid: u32) -> Option<u64> {
     let text = String::from_utf8_lossy(&output.stdout);
     let kb: u64 = text.trim().parse().ok()?;
     Some(kb * 1024)
+}
+
+// ---------------------------------------------------------------------------
+// Process stats (CPU + memory)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default)]
+pub struct ProcessStats {
+    pub cpu_percent: Option<f64>,
+    pub memory_bytes: Option<u64>,
+}
+
+pub type StatsCache = HashMap<u32, ProcessStats>;
+
+pub async fn read_process_stats(pid: u32) -> Option<(f64, u64)> {
+    let output = tokio::process::Command::new("ps")
+        .args(["-o", "%cpu=,rss=", "-p", &pid.to_string()])
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let text = text.trim();
+    let mut parts = text.split_whitespace();
+    let cpu: f64 = parts.next()?.parse().ok()?;
+    let rss_kb: u64 = parts.next()?.parse().ok()?;
+    Some((cpu, rss_kb * 1024))
+}
+
+pub fn spawn_stats_collector(
+    processes: Arc<RwLock<ProcessTable>>,
+    stats_cache: Arc<RwLock<StatsCache>>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(STATS_POLL_INTERVAL) => {}
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        return;
+                    }
+                }
+            }
+
+            if *shutdown_rx.borrow() {
+                return;
+            }
+
+            // Collect PIDs of running processes
+            let pids: Vec<(String, u32)> = {
+                let table = processes.read().await;
+                table
+                    .iter()
+                    .filter(|(_, m)| {
+                        matches!(m.status, ProcessStatus::Online | ProcessStatus::Starting)
+                    })
+                    .filter_map(|(name, m)| m.pid.map(|pid| (name.clone(), pid)))
+                    .collect()
+            };
+
+            let mut new_cache = HashMap::new();
+            for (_name, pid) in &pids {
+                if let Some((cpu, mem)) = read_process_stats(*pid).await {
+                    new_cache.insert(
+                        *pid,
+                        ProcessStats {
+                            cpu_percent: Some(cpu),
+                            memory_bytes: Some(mem),
+                        },
+                    );
+                }
+            }
+
+            *stats_cache.write().await = new_cache;
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -305,5 +388,21 @@ mod tests {
     async fn test_read_rss_nonexistent_pid() {
         let rss = read_rss_bytes(999_999_999).await;
         assert!(rss.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_read_process_stats_current_process() {
+        let pid = std::process::id();
+        let stats = read_process_stats(pid).await;
+        assert!(stats.is_some());
+        let (cpu, mem) = stats.unwrap();
+        assert!(cpu >= 0.0);
+        assert!(mem > 0);
+    }
+
+    #[tokio::test]
+    async fn test_read_process_stats_nonexistent_pid() {
+        let stats = read_process_stats(999_999_999).await;
+        assert!(stats.is_none());
     }
 }

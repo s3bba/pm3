@@ -141,6 +141,8 @@ fn print_response(response: &Response) {
                     Cell::new("group").add_attribute(Attribute::Bold),
                     Cell::new("pid").add_attribute(Attribute::Bold),
                     Cell::new("status").add_attribute(Attribute::Bold),
+                    Cell::new("cpu").add_attribute(Attribute::Bold),
+                    Cell::new("mem").add_attribute(Attribute::Bold),
                     Cell::new("uptime").add_attribute(Attribute::Bold),
                     Cell::new("restarts").add_attribute(Attribute::Bold),
                 ]);
@@ -152,6 +154,8 @@ fn print_response(response: &Response) {
                         .unwrap_or_else(|| "-".to_string());
                     let uptime = format_uptime(p.uptime);
                     let status = p.status.to_string();
+                    let cpu = format_cpu(p.cpu_percent);
+                    let mem = format_memory_bytes(p.memory_bytes);
                     let restarts = p.restarts.to_string();
                     let restarts_cell = if p.restarts > 0 {
                         Cell::new(&restarts).fg(Color::Yellow)
@@ -163,6 +167,8 @@ fn print_response(response: &Response) {
                         Cell::new(group).fg(Color::Magenta),
                         Cell::new(&pid),
                         Cell::new(&status).fg(status_color(&p.status)),
+                        Cell::new(&cpu),
+                        Cell::new(&mem),
                         Cell::new(&uptime),
                         restarts_cell,
                     ]);
@@ -187,6 +193,12 @@ fn print_response(response: &Response) {
             if let Some(cwd) = &info.cwd {
                 println!("  {} {cwd}", "cwd:".dimmed());
             }
+            println!("  {} {}", "cpu:".dimmed(), format_cpu(info.cpu_percent));
+            println!(
+                "  {} {}",
+                "memory:".dimmed(),
+                format_memory_bytes(info.memory_bytes)
+            );
             println!("  {} {}", "uptime:".dimmed(), format_uptime(info.uptime));
             println!("  {} {}", "restarts:".dimmed(), info.restarts);
             if let Some(group) = &info.group {
@@ -218,6 +230,23 @@ fn print_response(response: &Response) {
                 println!("{line}");
             }
         }
+    }
+}
+
+fn format_cpu(cpu: Option<f64>) -> String {
+    match cpu {
+        Some(v) => format!("{v:.1}%"),
+        None => "-".to_string(),
+    }
+}
+
+fn format_memory_bytes(bytes: Option<u64>) -> String {
+    match bytes {
+        None => "-".to_string(),
+        Some(b) if b < 1024 => format!("{b}B"),
+        Some(b) if b < 1024 * 1024 => format!("{:.1}K", b as f64 / 1024.0),
+        Some(b) if b < 1024 * 1024 * 1024 => format!("{:.1}M", b as f64 / (1024.0 * 1024.0)),
+        Some(b) => format!("{:.1}G", b as f64 / (1024.0 * 1024.0 * 1024.0)),
     }
 }
 

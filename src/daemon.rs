@@ -1,4 +1,5 @@
 use crate::manager::Manager;
+use crate::memory;
 use crate::paths::Paths;
 use crate::pid;
 use crate::protocol::{self, Request};
@@ -26,6 +27,12 @@ pub async fn run(paths: Paths) -> color_eyre::Result<()> {
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let manager = Manager::new(paths.clone());
+
+    memory::spawn_stats_collector(
+        manager.processes(),
+        manager.stats_cache(),
+        shutdown_tx.subscribe(),
+    );
 
     let result = run_accept_loop(&listener, &shutdown_tx, &mut shutdown_rx, &manager).await;
 
