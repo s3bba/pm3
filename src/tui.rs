@@ -1,5 +1,6 @@
 use crate::client;
 use crate::config;
+use crate::log;
 use crate::paths::Paths;
 use crate::protocol::{ProcessInfo, ProcessStatus, Request, Response};
 use color_eyre::eyre::Context;
@@ -43,6 +44,23 @@ const STATUS_RED: Color = Color::Red;
 const KEY_BG: Color = Color::Black;
 const KEY_FG: Color = Color::Green;
 
+// ── View types ──────────────────────────────────────────────────────
+enum LogSource {
+    Stdout,
+    Stderr,
+}
+
+enum View {
+    ProcessList,
+    LogViewer {
+        process_name: String,
+        lines: Vec<String>,
+        scroll_offset: u16,
+        auto_scroll: bool,
+        stream: LogSource,
+    },
+}
+
 pub fn run(paths: &Paths) -> color_eyre::Result<()> {
     let _guard = TerminalGuard::new()?;
     let backend = CrosstermBackend::new(io::stdout());
@@ -67,6 +85,7 @@ pub fn run(paths: &Paths) -> color_eyre::Result<()> {
 
         if last_tick.elapsed() >= TICK_RATE {
             app.refresh(paths);
+            app.refresh_logs(paths);
             last_tick = Instant::now();
         }
     }
@@ -76,19 +95,64 @@ pub fn run(paths: &Paths) -> color_eyre::Result<()> {
 }
 
 fn handle_key_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers, paths: &Paths) -> bool {
+    // Ctrl+C is global quit
+    if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+        return true;
+    }
+
+    match app.view {
+        View::ProcessList => handle_process_list_key(app, code, paths),
+        View::LogViewer { .. } => handle_log_viewer_key(app, code, paths),
+    }
+}
+
+fn handle_process_list_key(app: &mut App, code: KeyCode, paths: &Paths) -> bool {
     match code {
         KeyCode::Char('q') | KeyCode::Esc => return true,
-        KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return true,
         KeyCode::Down | KeyCode::Char('j') => app.next(),
         KeyCode::Up | KeyCode::Char('k') => app.previous(),
         KeyCode::Home => app.first(),
         KeyCode::End => app.last(),
+        KeyCode::Enter => app.open_log_viewer(paths),
         KeyCode::Char('s') => app.start_selected(paths),
         KeyCode::Char('x') => app.stop_selected(paths),
         KeyCode::Char('r') => app.restart_selected(paths),
         KeyCode::Char('S') => app.start_all(paths),
         KeyCode::Char('X') => app.stop_all(paths),
         KeyCode::Char('R') => app.restart_all(paths),
+        _ => {}
+    }
+    false
+}
+
+fn handle_log_viewer_key(app: &mut App, code: KeyCode, paths: &Paths) -> bool {
+    match code {
+        KeyCode::Char('q') | KeyCode::Esc => app.close_log_viewer(),
+        KeyCode::Up | KeyCode::Char('k') => app.log_scroll_up(1),
+        KeyCode::Down | KeyCode::Char('j') => app.log_scroll_down(1),
+        KeyCode::PageUp => app.log_page_up(),
+        KeyCode::PageDown => app.log_page_down(),
+        KeyCode::Home | KeyCode::Char('g') => app.log_scroll_to_top(),
+        KeyCode::End | KeyCode::Char('G') => app.log_scroll_to_bottom(),
+        KeyCode::Tab => app.toggle_log_stream(paths),
+        KeyCode::Char('s') => {
+            let name = app.viewed_process_name().map(|s| s.to_string());
+            if let Some(name) = name {
+                app.start_named(&name, paths);
+            }
+        }
+        KeyCode::Char('x') => {
+            let name = app.viewed_process_name().map(|s| s.to_string());
+            if let Some(name) = name {
+                app.stop_named(&name, paths);
+            }
+        }
+        KeyCode::Char('r') => {
+            let name = app.viewed_process_name().map(|s| s.to_string());
+            if let Some(name) = name {
+                app.restart_named(&name, paths);
+            }
+        }
         _ => {}
     }
     false
@@ -102,7 +166,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(3), // header card
             Constraint::Length(1), // spacer
-            Constraint::Min(5),    // table
+            Constraint::Min(5),    // table / log viewer
             Constraint::Length(1), // spacer
             Constraint::Length(1), // footer
         ])
@@ -114,8 +178,16 @@ fn ui(f: &mut Frame, app: &mut App) {
     f.render_widget(spacer.clone(), layout[1]);
     f.render_widget(spacer, layout[3]);
 
-    render_table(f, app, layout[2], terminal_width);
-    render_footer(f, app, layout[4]);
+    match &app.view {
+        View::ProcessList => {
+            render_table(f, app, layout[2], terminal_width);
+            render_process_list_footer(f, app, layout[4]);
+        }
+        View::LogViewer { .. } => {
+            render_log_viewer(f, app, layout[2]);
+            render_log_viewer_footer(f, &*app, layout[4]);
+        }
+    }
 }
 
 fn render_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -368,7 +440,7 @@ fn render_table(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect, termi
     f.render_stateful_widget(table, area, &mut app.table_state);
 }
 
-fn render_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_process_list_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let key_style = Style::default()
         .fg(KEY_FG)
         .bg(KEY_BG)
@@ -381,6 +453,8 @@ fn render_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(" quit ", label_style),
         Span::styled(" ↑↓ ", key_style),
         Span::styled(" move ", label_style),
+        Span::styled(" ⏎ ", key_style),
+        Span::styled(" logs ", label_style),
         Span::styled(" s ", key_style),
         Span::styled(" start ", label_style),
         Span::styled(" x ", key_style),
@@ -394,6 +468,50 @@ fn render_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(" R ", key_style),
         Span::styled(" restart all ", label_style),
     ];
+
+    append_status_spans(&mut spans, app);
+
+    let line = Line::from(spans);
+    let footer = Paragraph::new(Text::from(line)).style(Style::default().bg(BG_BASE));
+    f.render_widget(footer, area);
+}
+
+fn render_log_viewer_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let key_style = Style::default()
+        .fg(KEY_FG)
+        .bg(KEY_BG)
+        .add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(FG_DIM);
+
+    let mut spans = vec![
+        Span::styled(" ", label_style),
+        Span::styled(" q ", key_style),
+        Span::styled(" back ", label_style),
+        Span::styled(" ↑↓ ", key_style),
+        Span::styled(" scroll ", label_style),
+        Span::styled(" PgUp/Dn ", key_style),
+        Span::styled(" page ", label_style),
+        Span::styled(" G ", key_style),
+        Span::styled(" bottom ", label_style),
+        Span::styled(" Tab ", key_style),
+        Span::styled(" switch tab ", label_style),
+        Span::styled(" s ", key_style),
+        Span::styled(" start ", label_style),
+        Span::styled(" x ", key_style),
+        Span::styled(" stop ", label_style),
+        Span::styled(" r ", key_style),
+        Span::styled(" restart ", label_style),
+    ];
+
+    append_status_spans(&mut spans, app);
+
+    let line = Line::from(spans);
+    let footer = Paragraph::new(Text::from(line)).style(Style::default().bg(BG_BASE));
+    f.render_widget(footer, area);
+}
+
+fn append_status_spans<'a>(spans: &mut Vec<Span<'a>>, app: &'a App) {
+    let label_style = Style::default().fg(FG_DIM);
 
     if let Some((msg, is_success)) = app.active_status_message() {
         let (fg, bg) = if is_success {
@@ -416,10 +534,115 @@ fn render_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
+}
 
-    let line = Line::from(spans);
-    let footer = Paragraph::new(Text::from(line)).style(Style::default().bg(BG_BASE));
-    f.render_widget(footer, area);
+fn render_log_viewer(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    let (process_name, lines, scroll_offset, auto_scroll, stream) = match &app.view {
+        View::LogViewer {
+            process_name,
+            lines,
+            scroll_offset,
+            auto_scroll,
+            stream,
+        } => (process_name, lines, *scroll_offset, *auto_scroll, stream),
+        _ => return,
+    };
+
+    let stream_label = match stream {
+        LogSource::Stdout => "stdout",
+        LogSource::Stderr => "stderr",
+    };
+
+    // Split area: tab bar (1 line) + content
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(3)])
+        .split(area);
+
+    // ── Tab bar ─────────────────────────────────────────────────────
+    let active_style = Style::default()
+        .fg(FG_BRIGHT)
+        .bg(ACCENT)
+        .add_modifier(Modifier::BOLD);
+    let inactive_style = Style::default().fg(FG_DIM).bg(BG_BASE);
+
+    let tabs = [
+        (" stdout ", LogSource::Stdout),
+        (" stderr ", LogSource::Stderr),
+    ];
+
+    let mut tab_spans: Vec<Span> = vec![Span::styled(" ", Style::default().bg(BG_BASE))];
+
+    for (label, variant) in &tabs {
+        let is_active = std::mem::discriminant(stream) == std::mem::discriminant(variant);
+        let style = if is_active {
+            active_style
+        } else {
+            inactive_style
+        };
+        tab_spans.push(Span::styled(*label, style));
+        tab_spans.push(Span::styled(" ", Style::default().bg(BG_BASE)));
+    }
+
+    let tab_line = Paragraph::new(Line::from(tab_spans)).style(Style::default().bg(BG_BASE));
+    f.render_widget(tab_line, chunks[0]);
+
+    // ── Log content ─────────────────────────────────────────────────
+    let scroll_label = if auto_scroll { "following" } else { "paused" };
+    let title = Line::from(vec![
+        Span::styled(
+            format!(" {process_name} "),
+            Style::default().fg(FG_TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("({scroll_label}) "), Style::default().fg(FG_DIM)),
+    ]);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT_DIM))
+        .padding(Padding::horizontal(1));
+
+    let inner = block.inner(chunks[1]);
+    f.render_widget(block, chunks[1]);
+
+    let visible_height = inner.height as usize;
+    app.last_visible_height = inner.height;
+    if visible_height == 0 {
+        return;
+    }
+
+    if lines.is_empty() {
+        let empty_msg = format!("No {stream_label} output yet");
+        let text = Paragraph::new(Text::from(Line::from(Span::styled(
+            empty_msg,
+            Style::default().fg(FG_DIM),
+        ))))
+        .alignment(Alignment::Center);
+        f.render_widget(text, inner);
+        return;
+    }
+
+    // Calculate visible window: lines are displayed bottom-pinned
+    // scroll_offset=0 means showing the last `visible_height` lines
+    let total = lines.len();
+    let end = total.saturating_sub(scroll_offset as usize);
+    let start = end.saturating_sub(visible_height);
+
+    let is_stderr = matches!(stream, LogSource::Stderr);
+    let line_style = if is_stderr {
+        Style::default().fg(STATUS_RED)
+    } else {
+        Style::default().fg(FG_TEXT)
+    };
+
+    let display_lines: Vec<Line> = lines[start..end]
+        .iter()
+        .map(|l| Line::from(Span::styled(l.as_str(), line_style)))
+        .collect();
+
+    let text = Paragraph::new(Text::from(display_lines));
+    f.render_widget(text, inner);
 }
 
 fn status_style(status: ProcessStatus) -> Style {
@@ -504,6 +727,8 @@ struct App {
     table_state: TableState,
     last_error: Option<String>,
     status_message: Option<(String, bool, Instant)>, // (message, is_success, timestamp)
+    view: View,
+    last_visible_height: u16,
 }
 
 impl App {
@@ -513,6 +738,8 @@ impl App {
             table_state: TableState::default(),
             last_error: None,
             status_message: None,
+            view: View::ProcessList,
+            last_visible_height: 20,
         }
     }
 
@@ -531,75 +758,27 @@ impl App {
     }
 
     fn start_selected(&mut self, paths: &Paths) {
-        let name = match self.selected_name() {
+        let name = match self.viewed_process_name() {
             Some(n) => n.to_string(),
             None => return,
         };
-        let configs = match load_configs() {
-            Ok(c) => c,
-            Err(e) => {
-                self.set_status(format!("config error: {e}"), false);
-                return;
-            }
-        };
-        match client::send_request(
-            paths,
-            &Request::Start {
-                configs,
-                names: Some(vec![name.clone()]),
-                env: None,
-            },
-        ) {
-            Ok(Response::Success { .. }) => {
-                self.set_status(format!("started {name}"), true);
-                self.refresh(paths);
-            }
-            Ok(Response::Error { message }) => self.set_status(message, false),
-            Ok(_) => self.set_status("unexpected response".to_string(), false),
-            Err(e) => self.set_status(e.to_string(), false),
-        }
+        self.start_named(&name, paths);
     }
 
     fn stop_selected(&mut self, paths: &Paths) {
-        let name = match self.selected_name() {
+        let name = match self.viewed_process_name() {
             Some(n) => n.to_string(),
             None => return,
         };
-        match client::send_request(
-            paths,
-            &Request::Stop {
-                names: Some(vec![name.clone()]),
-            },
-        ) {
-            Ok(Response::Success { .. }) => {
-                self.set_status(format!("stopped {name}"), true);
-                self.refresh(paths);
-            }
-            Ok(Response::Error { message }) => self.set_status(message, false),
-            Ok(_) => self.set_status("unexpected response".to_string(), false),
-            Err(e) => self.set_status(e.to_string(), false),
-        }
+        self.stop_named(&name, paths);
     }
 
     fn restart_selected(&mut self, paths: &Paths) {
-        let name = match self.selected_name() {
+        let name = match self.viewed_process_name() {
             Some(n) => n.to_string(),
             None => return,
         };
-        match client::send_request(
-            paths,
-            &Request::Restart {
-                names: Some(vec![name.clone()]),
-            },
-        ) {
-            Ok(Response::Success { .. }) => {
-                self.set_status(format!("restarted {name}"), true);
-                self.refresh(paths);
-            }
-            Ok(Response::Error { message }) => self.set_status(message, false),
-            Ok(_) => self.set_status("unexpected response".to_string(), false),
-            Err(e) => self.set_status(e.to_string(), false),
-        }
+        self.restart_named(&name, paths);
     }
 
     fn start_all(&mut self, paths: &Paths) {
@@ -731,6 +910,201 @@ impl App {
     fn last(&mut self) {
         if !self.processes.is_empty() {
             self.table_state.select(Some(self.processes.len() - 1));
+        }
+    }
+
+    // ── Log viewer methods ──────────────────────────────────────────
+
+    fn viewed_process_name(&self) -> Option<&str> {
+        match &self.view {
+            View::LogViewer { process_name, .. } => Some(process_name.as_str()),
+            View::ProcessList => self.selected_name(),
+        }
+    }
+
+    fn open_log_viewer(&mut self, paths: &Paths) {
+        let name = match self.selected_name() {
+            Some(n) => n.to_string(),
+            None => return,
+        };
+        self.view = View::LogViewer {
+            process_name: name,
+            lines: Vec::new(),
+            scroll_offset: 0,
+            auto_scroll: true,
+            stream: LogSource::Stdout,
+        };
+        self.refresh_logs(paths);
+    }
+
+    fn close_log_viewer(&mut self) {
+        self.view = View::ProcessList;
+    }
+
+    fn toggle_log_stream(&mut self, paths: &Paths) {
+        if let View::LogViewer {
+            stream,
+            lines,
+            scroll_offset,
+            auto_scroll,
+            ..
+        } = &mut self.view
+        {
+            *stream = match stream {
+                LogSource::Stdout => LogSource::Stderr,
+                LogSource::Stderr => LogSource::Stdout,
+            };
+            *lines = Vec::new();
+            *scroll_offset = 0;
+            *auto_scroll = true;
+        }
+        self.refresh_logs(paths);
+    }
+
+    fn refresh_logs(&mut self, paths: &Paths) {
+        if let View::LogViewer {
+            process_name,
+            lines,
+            scroll_offset,
+            auto_scroll,
+            stream,
+        } = &mut self.view
+        {
+            let path = match stream {
+                LogSource::Stdout => paths.stdout_log(process_name),
+                LogSource::Stderr => paths.stderr_log(process_name),
+            };
+            if let Ok(new_lines) = log::tail_file(&path, 200) {
+                *lines = new_lines;
+            }
+            if *auto_scroll {
+                *scroll_offset = 0;
+            }
+        }
+    }
+
+    fn log_scroll_up(&mut self, amount: u16) {
+        if let View::LogViewer {
+            lines,
+            scroll_offset,
+            auto_scroll,
+            ..
+        } = &mut self.view
+        {
+            *auto_scroll = false;
+            let max_offset = lines.len().saturating_sub(1) as u16;
+            *scroll_offset = (*scroll_offset + amount).min(max_offset);
+        }
+    }
+
+    fn log_scroll_down(&mut self, amount: u16) {
+        if let View::LogViewer {
+            scroll_offset,
+            auto_scroll,
+            ..
+        } = &mut self.view
+        {
+            if *scroll_offset <= amount {
+                *scroll_offset = 0;
+                *auto_scroll = true;
+            } else {
+                *scroll_offset -= amount;
+            }
+        }
+    }
+
+    fn log_page_up(&mut self) {
+        let page = self.last_visible_height.max(1);
+        self.log_scroll_up(page);
+    }
+
+    fn log_page_down(&mut self) {
+        let page = self.last_visible_height.max(1);
+        self.log_scroll_down(page);
+    }
+
+    fn log_scroll_to_top(&mut self) {
+        if let View::LogViewer {
+            lines,
+            scroll_offset,
+            auto_scroll,
+            ..
+        } = &mut self.view
+        {
+            *auto_scroll = false;
+            *scroll_offset = lines.len().saturating_sub(1) as u16;
+        }
+    }
+
+    fn log_scroll_to_bottom(&mut self) {
+        if let View::LogViewer {
+            scroll_offset,
+            auto_scroll,
+            ..
+        } = &mut self.view
+        {
+            *scroll_offset = 0;
+            *auto_scroll = true;
+        }
+    }
+
+    fn start_named(&mut self, name: &str, paths: &Paths) {
+        let configs = match load_configs() {
+            Ok(c) => c,
+            Err(e) => {
+                self.set_status(format!("config error: {e}"), false);
+                return;
+            }
+        };
+        match client::send_request(
+            paths,
+            &Request::Start {
+                configs,
+                names: Some(vec![name.to_string()]),
+                env: None,
+            },
+        ) {
+            Ok(Response::Success { .. }) => {
+                self.set_status(format!("started {name}"), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
+        }
+    }
+
+    fn stop_named(&mut self, name: &str, paths: &Paths) {
+        match client::send_request(
+            paths,
+            &Request::Stop {
+                names: Some(vec![name.to_string()]),
+            },
+        ) {
+            Ok(Response::Success { .. }) => {
+                self.set_status(format!("stopped {name}"), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
+        }
+    }
+
+    fn restart_named(&mut self, name: &str, paths: &Paths) {
+        match client::send_request(
+            paths,
+            &Request::Restart {
+                names: Some(vec![name.to_string()]),
+            },
+        ) {
+            Ok(Response::Success { .. }) => {
+                self.set_status(format!("restarted {name}"), true);
+                self.refresh(paths);
+            }
+            Ok(Response::Error { message }) => self.set_status(message, false),
+            Ok(_) => self.set_status("unexpected response".to_string(), false),
+            Err(e) => self.set_status(e.to_string(), false),
         }
     }
 }

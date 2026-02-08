@@ -2,7 +2,10 @@
 command = "python3 -m http.server 8080"
 
 [worker]
-command = "bash -c 'while true; do echo working...; sleep 5; done'"
+command = "bash -c 'i=0; while true; do i=$((i+1)); echo \"[worker] task #$i completed\"; sleep 2; done'"
+
+[ticker]
+command = "bash -c 'while true; do echo \"$(date +%T) tick\"; echo \"$(date +%T) warning: something looks off\" >&2; sleep 3; done'"
 
 [docs]
 command = "python3 -m http.server 3000"
