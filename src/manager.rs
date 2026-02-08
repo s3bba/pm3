@@ -199,13 +199,39 @@ impl Manager {
         }
 
         if started.is_empty() {
-            Response::Success {
+            return Response::Success {
                 message: Some("everything is already running".to_string()),
+            };
+        }
+
+        // Check for processes that exited immediately after spawn
+        {
+            let table = self.processes.read().await;
+            let failures: Vec<&String> = started
+                .iter()
+                .filter(|name| {
+                    table
+                        .get(*name)
+                        .map(|p| p.status == ProcessStatus::Errored)
+                        .unwrap_or(false)
+                })
+                .collect();
+            if !failures.is_empty() {
+                return Response::Error {
+                    message: format!(
+                        "failed to start '{}': process exited immediately",
+                        failures
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                };
             }
-        } else {
-            Response::Success {
-                message: Some(format!("started: {}", started.join(", "))),
-            }
+        }
+
+        Response::Success {
+            message: Some(format!("started: {}", started.join(", "))),
         }
     }
 

@@ -351,11 +351,11 @@ pub async fn spawn_process(
         Ok(Some(exit_status)) => {
             // Process already exited
             let exit_code = exit_status.code();
-            if exit_code != Some(0) {
-                return Err(ProcessError::ImmediateExit { exit_code });
+            if exit_code == Some(0) {
+                ProcessStatus::Stopped
+            } else {
+                ProcessStatus::Errored
             }
-            // Exited with code 0 — completed successfully
-            ProcessStatus::Stopped
         }
         Ok(None) => {
             // Still running
