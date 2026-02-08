@@ -88,7 +88,8 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     f.render_widget(logo_widget(), header_body[0]);
     let counts = status_counts(&app.processes);
-    f.render_widget(status_widget(app, &counts), header_body[1]);
+    let summary = status_widget(app, &counts);
+    f.render_widget(summary, header_body[1]);
 
     let main = Layout::default()
         .direction(Direction::Horizontal)
@@ -304,9 +305,10 @@ fn status_widget(app: &App, counts: &StatusCounts) -> Paragraph<'static> {
 fn status_line(label: &'static str, count: usize, style: Style) -> Line<'static> {
     let label_style = Style::default().fg(Color::Gray);
     let value_style = style.add_modifier(Modifier::BOLD);
-    let label_padded = format!("{label:<9}");
+    let label_padded = format!("{label:<10}");
     Line::from(vec![
         Span::styled(label_padded, label_style),
+        Span::raw("  "),
         Span::styled(count.to_string(), value_style),
     ])
 }
