@@ -40,7 +40,11 @@ mod platform {
 
     pub fn is_pid_alive(pid: u32) -> bool {
         let Ok(pid) = to_pid(pid) else { return false };
-        nix::sys::signal::kill(pid, None).is_ok()
+        match nix::sys::signal::kill(pid, None) {
+            Ok(()) => true,
+            Err(nix::errno::Errno::EPERM) => true,
+            Err(_) => false,
+        }
     }
 
     pub fn check_pid(pid: u32) -> Result<bool, io::Error> {
