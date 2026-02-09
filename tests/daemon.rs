@@ -4272,37 +4272,14 @@ async fn test_resurrect_restores_processes() {
     // Small delay between daemon instances
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Phase 2: start a new daemon, resurrect
+    // Phase 2: start a new daemon — auto-restore brings processes back
     {
         let handle = start_test_daemon(&paths).await;
 
-        // Verify no processes running
-        let resp = send_raw_request(&paths, &Request::List).await;
-        match &resp {
-            Response::ProcessList { processes } => {
-                assert!(
-                    processes.is_empty(),
-                    "fresh daemon should have no processes"
-                );
-            }
-            _ => panic!("expected process list"),
-        }
-
-        // Resurrect
-        let resp = send_raw_request(&paths, &Request::Resurrect).await;
-        match resp {
-            Response::Success { message } => {
-                let msg = message.unwrap();
-                assert!(msg.contains("web"), "should mention web: {}", msg);
-                assert!(msg.contains("worker"), "should mention worker: {}", msg);
-            }
-            _ => panic!("expected success, got {:?}", resp),
-        }
-
-        // Wait for processes to come online
+        // Wait for auto-restore to bring processes online
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Verify both processes are running
+        // Verify both processes were auto-restored and are running
         let resp = send_raw_request(&paths, &Request::List).await;
         match resp {
             Response::ProcessList { processes } => {
@@ -4313,6 +4290,20 @@ async fn test_resurrect_restores_processes() {
                 }
             }
             _ => panic!("expected process list"),
+        }
+
+        // Explicit resurrect should report everything already running
+        let resp = send_raw_request(&paths, &Request::Resurrect).await;
+        match resp {
+            Response::Success { message } => {
+                let msg = message.unwrap();
+                assert!(
+                    msg.contains("already running"),
+                    "should say already running: {}",
+                    msg
+                );
+            }
+            _ => panic!("expected success, got {:?}", resp),
         }
 
         send_raw_request(&paths, &Request::Kill).await;
@@ -4354,18 +4345,11 @@ async fn test_resurrect_marks_dead_processes_as_restarted() {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Phase 2: resurrect — old PID is dead, so process gets freshly spawned
+    // Phase 2: auto-restore brings back the process with a new PID
     {
         let handle = start_test_daemon(&paths).await;
 
-        let resp = send_raw_request(&paths, &Request::Resurrect).await;
-        match resp {
-            Response::Success { message } => {
-                assert!(message.unwrap().contains("myproc"));
-            }
-            _ => panic!("expected success, got {:?}", resp),
-        }
-
+        // Wait for auto-restore to bring the process online
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Process should be online with a new PID
