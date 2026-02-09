@@ -154,7 +154,7 @@ mod platform {
 
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid);
-            if handle == 0 {
+            if handle.is_null() {
                 return false;
             }
             let mut exit_code: u32 = 0;
@@ -181,7 +181,7 @@ mod platform {
 
         unsafe {
             let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
-            if handle == 0 {
+            if handle.is_null() {
                 return Err(io::Error::last_os_error());
             }
             let result = TerminateProcess(handle, 1);
