@@ -30,6 +30,8 @@ pub enum Command {
     List,
     /// Open interactive TUI
     Tui,
+    /// Initialize a new pm3.toml configuration file
+    Init,
     /// Stop all processes and shut down the daemon
     Kill,
     /// Reload process configuration
@@ -112,6 +114,12 @@ mod tests {
     fn test_tui() {
         let cli = Cli::try_parse_from(["pm3", "tui"]).unwrap();
         assert!(matches!(cli.command.unwrap(), Command::Tui));
+    }
+
+    #[test]
+    fn test_init() {
+        let cli = Cli::try_parse_from(["pm3", "init"]).unwrap();
+        assert!(matches!(cli.command.unwrap(), Command::Init));
     }
 
     // Names handling

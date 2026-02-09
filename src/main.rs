@@ -13,6 +13,11 @@ async fn main() -> color_eyre::Result<()> {
         let paths = pm3::paths::Paths::new()?;
         pm3::daemon::run(paths).await?;
     } else if let Some(command) = cli.command {
+        if matches!(command, Command::Init) {
+            let cwd = std::env::current_dir()?;
+            pm3::init::run(&cwd)?;
+            return Ok(());
+        }
         let paths = pm3::paths::Paths::new()?;
         if matches!(command, Command::Tui) {
             pm3::tui::run(&paths)?;
@@ -84,6 +89,7 @@ fn command_to_request(command: Command) -> color_eyre::Result<Request> {
             names: Command::optional_names(names),
         }),
         Command::Tui => unreachable!("tui is handled directly in main"),
+        Command::Init => unreachable!("init is handled directly in main"),
         Command::Info { name } => Ok(Request::Info { name }),
         Command::Signal { name, signal } => Ok(Request::Signal { name, signal }),
         Command::Save => Ok(Request::Save),

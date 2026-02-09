@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
+use pm3::config;
 use pm3::protocol::{ProcessInfo, ProcessStatus, Response};
 use predicates::prelude::*;
 use std::path::Path;
@@ -1658,4 +1659,108 @@ command = "sh -c 'exit 1'"
     }
 
     kill_daemon(&data_dir, work_dir);
+}
+
+// ---------------------------------------------------------------------------
+// Init command E2E tests
+// ---------------------------------------------------------------------------
+
+fn pm3_init(work_dir: &Path) -> Command {
+    let mut cmd: Command = cargo_bin_cmd!("pm3");
+    cmd.current_dir(work_dir);
+    cmd.timeout(Duration::from_secs(10));
+    cmd
+}
+
+#[test]
+fn test_e2e_init_generates_valid_toml() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+
+    // Pipe answers: name, command, cwd (empty), env (empty), restart (default), health_check (empty), group (empty), add another (n)
+    let stdin = "web\nnode server.js\n\n\non_failure\n\n\nn\n";
+
+    pm3_init(work_dir)
+        .arg("init")
+        .write_stdin(stdin)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created"));
+
+    let config_path = work_dir.join("pm3.toml");
+    assert!(config_path.exists(), "pm3.toml should be created");
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let configs = config::parse_config(&content).expect("generated TOML should be valid");
+    assert!(configs.contains_key("web"), "should contain 'web' process");
+    assert_eq!(configs["web"].command, "node server.js");
+}
+
+#[test]
+fn test_e2e_init_warns_on_existing_toml() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+
+    let config_path = work_dir.join("pm3.toml");
+    let original = "[existing]\ncommand = \"sleep 1\"\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    // Answer "n" to overwrite prompt
+    pm3_init(work_dir)
+        .arg("init")
+        .write_stdin("n\n")
+        .assert()
+        .failure();
+
+    // File should be unchanged
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert_eq!(
+        content, original,
+        "file should be unchanged after declining overwrite"
+    );
+}
+
+#[test]
+fn test_e2e_init_multiple_processes() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+
+    // First process: web, then "y" to add another, second process: worker, then "n"
+    let stdin = [
+        "web",            // name
+        "node server.js", // command
+        "",               // cwd (skip)
+        "",               // env (skip)
+        "on_failure",     // restart
+        "",               // health_check (skip)
+        "",               // group (skip)
+        // no deps prompt (no existing processes)
+        "y",                // add another
+        "worker",           // name
+        "python worker.py", // command
+        "",                 // cwd (skip)
+        "",                 // env (skip)
+        "always",           // restart
+        "",                 // health_check (skip)
+        "",                 // group (skip)
+        "web",              // dependencies
+        "n",                // add another
+    ]
+    .join("\n")
+        + "\n";
+
+    pm3_init(work_dir)
+        .arg("init")
+        .write_stdin(stdin)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created"));
+
+    let config_path = work_dir.join("pm3.toml");
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let configs = config::parse_config(&content).expect("generated TOML should be valid");
+    assert_eq!(configs.len(), 2);
+    assert!(configs.contains_key("web"));
+    assert!(configs.contains_key("worker"));
+    assert_eq!(configs["worker"].depends_on, Some(vec!["web".to_string()]));
 }

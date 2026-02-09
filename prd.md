@@ -160,13 +160,6 @@ Both talk to the same background daemon.
 - Hooks run synchronously; if `pre_start` fails (non-zero exit), the process won't start
 - Hook stdout/stderr captured in the process's log files
 
-## Crash Notifications
-- `notify` config field per process
-- `notify = "webhook://https://..."` — POST JSON payload to the URL on crash/unhealthy
-- `notify = "telegram://<bot_token>@<chat_id>"` — send a message via Telegram Bot API
-- `notify = "desktop"` — OS-level desktop notification (macOS/Linux)
-- Payload includes: process name, exit code, restart count, timestamp
-
 ## Signals
 - `pm3 signal <name> <signal>` — send an arbitrary signal to a process
 - Useful for config reloads (SIGHUP), debug toggling (SIGUSR1), etc.
@@ -505,9 +498,9 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     - ~~Integration: TUI renders process table with correct data from daemon~~
     - ~~Integration: table updates when process status changes~~
 
-42. TUI log viewer — view logs for selected process
-    - Integration: selecting a process shows its log output
-    - Integration: logs auto-scroll as new lines appear
+~~42. TUI log viewer — view logs for selected process~~
+    - ~~Integration: selecting a process shows its log output~~
+    - ~~Integration: logs auto-scroll as new lines appear~~
 
 ~~43. TUI actions — start/stop/restart from TUI~~
     - ~~Integration: pressing action keys sends correct request to daemon~~
@@ -519,21 +512,12 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     <!-- - Integration: applying config changes restarts affected processes -->
 
 ### Phase 10 — Init, deploy, startup
-45. Init wizard — `pm3 init`, interactive prompts, scan for existing configs
-    - E2E: run `pm3 init` in a directory with package.json, verify suggested defaults
-    - E2E: generated pm3.toml is valid and parseable
-    - Integration: scanning Procfile, docker-compose.yml produces correct suggestions
-    - E2E: `pm3 init` in a directory with existing pm3.toml warns before overwriting
+~~45. Init wizard — `pm3 init`, interactive prompts, asks a bunch of questions and generates a pm3.toml~~
+    - ~~E2E: generated pm3.toml is valid and parseable~~
+    - ~~E2E: `pm3 init` in a directory with existing pm3.toml warns before overwriting~~
 
 46. Startup script generation — `pm3 startup` / `pm3 unstartup`
     - Integration: on macOS, generates a valid launchd plist
     - Integration: on Linux, generates a valid systemd unit file
     - E2E: `pm3 unstartup` removes the generated file
     - Unit: generated file content is correct (paths, user, etc.)
-
-47. Deployment — `pm3 deploy`, SSH-based with hooks and rollback
-    - Unit: deploy config parsing from `[deploy.production]`
-    - Integration: `pm3 deploy production setup` runs `pre_setup` hook
-    - Integration: `pm3 deploy production` runs git pull + `post_deploy` hook
-    - Integration: `pm3 deploy production revert` rolls back to previous deployment
-    - E2E: deploy to a local SSH target (localhost) end-to-end
