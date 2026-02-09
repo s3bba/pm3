@@ -14,6 +14,16 @@ mod platform {
 
     use crate::process::ProcessError;
 
+    fn to_pid(pid: u32) -> io::Result<nix::unistd::Pid> {
+        let raw = i32::try_from(pid).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("PID {pid} exceeds i32::MAX"),
+            )
+        })?;
+        Ok(nix::unistd::Pid::from_raw(raw))
+    }
+
     pub fn parse_signal(name: &str) -> Result<Signal, ProcessError> {
         use std::str::FromStr;
         let normalized = if name.starts_with("SIG") {
@@ -25,16 +35,16 @@ mod platform {
     }
 
     pub fn send_signal(pid: u32, signal: Signal) -> io::Result<()> {
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), signal)
-            .map_err(io::Error::other)
+        nix::sys::signal::kill(to_pid(pid)?, signal).map_err(io::Error::other)
     }
 
     pub fn is_pid_alive(pid: u32) -> bool {
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+        let Ok(pid) = to_pid(pid) else { return false };
+        nix::sys::signal::kill(pid, None).is_ok()
     }
 
     pub fn check_pid(pid: u32) -> Result<bool, io::Error> {
-        match nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None) {
+        match nix::sys::signal::kill(to_pid(pid)?, None) {
             Ok(()) => Ok(true),
             Err(nix::errno::Errno::ESRCH) => Ok(false),
             Err(nix::errno::Errno::EPERM) => Ok(true),
