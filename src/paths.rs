@@ -41,6 +41,10 @@ impl Paths {
         self.data_dir.join("dump.json")
     }
 
+    pub fn port_file(&self) -> PathBuf {
+        self.data_dir.join("pm3.port")
+    }
+
     pub fn log_dir(&self) -> PathBuf {
         self.data_dir.join("logs")
     }

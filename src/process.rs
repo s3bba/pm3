@@ -4,7 +4,6 @@ use crate::paths::Paths;
 use crate::protocol::{ProcessDetail, ProcessInfo, ProcessStatus};
 use crate::{cron, health, memory, watch as file_watch};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs;
@@ -66,14 +65,8 @@ pub fn parse_command(command: &str) -> Result<(String, Vec<String>), ProcessErro
 // Signal parsing
 // ---------------------------------------------------------------------------
 
-pub fn parse_signal(name: &str) -> Result<nix::sys::signal::Signal, ProcessError> {
-    let normalized = if name.starts_with("SIG") {
-        name.to_string()
-    } else {
-        format!("SIG{name}")
-    };
-    nix::sys::signal::Signal::from_str(&normalized)
-        .map_err(|_| ProcessError::InvalidSignal(name.to_string()))
+pub fn parse_signal(name: &str) -> Result<crate::sys::Signal, ProcessError> {
+    crate::sys::parse_signal(name)
 }
 
 // ---------------------------------------------------------------------------
@@ -99,8 +92,7 @@ pub async fn run_hook(
         .open(paths.stderr_log(name))
         .map_err(ProcessError::SpawnFailed)?;
 
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(hook);
+    let mut cmd = crate::sys::hook_command(hook);
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
@@ -201,16 +193,15 @@ impl ManagedProcess {
         let timeout_ms = self.config.kill_timeout.unwrap_or(DEFAULT_KILL_TIMEOUT_MS);
         let duration = Duration::from_millis(timeout_ms);
 
-        let pid = nix::unistd::Pid::from_raw(raw_pid as i32);
-        let _ = nix::sys::signal::kill(pid, signal);
+        let _ = crate::sys::send_signal(raw_pid, signal);
 
         // Poll for process exit
         let deadline = tokio::time::Instant::now() + duration;
-        while nix::sys::signal::kill(pid, None).is_ok() {
+        while crate::sys::is_pid_alive(raw_pid) {
             if tokio::time::Instant::now() >= deadline {
-                // Timeout — escalate to SIGKILL
-                let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
-                // Brief wait for SIGKILL to take effect
+                // Timeout — escalate to force kill
+                let _ = crate::sys::force_kill(raw_pid);
+                // Brief wait for kill to take effect
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 break;
             }
@@ -671,36 +662,42 @@ mod tests {
         assert_eq!(DEFAULT_KILL_SIGNAL, "SIGTERM");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_signal_sigterm() {
         let sig = parse_signal("SIGTERM").unwrap();
         assert_eq!(sig, nix::sys::signal::Signal::SIGTERM);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_signal_sigint() {
         let sig = parse_signal("SIGINT").unwrap();
         assert_eq!(sig, nix::sys::signal::Signal::SIGINT);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_signal_sighup() {
         let sig = parse_signal("SIGHUP").unwrap();
         assert_eq!(sig, nix::sys::signal::Signal::SIGHUP);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_signal_sigusr1() {
         let sig = parse_signal("SIGUSR1").unwrap();
         assert_eq!(sig, nix::sys::signal::Signal::SIGUSR1);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_signal_sigusr2() {
         let sig = parse_signal("SIGUSR2").unwrap();
         assert_eq!(sig, nix::sys::signal::Signal::SIGUSR2);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_signal_without_sig_prefix() {
         let sig = parse_signal("TERM").unwrap();

@@ -1,6 +1,4 @@
 use crate::paths::Paths;
-use nix::sys::signal;
-use nix::unistd::Pid;
 use std::io;
 use tokio::fs;
 
@@ -30,14 +28,13 @@ pub fn is_daemon_running_sync(paths: &Paths) -> io::Result<bool> {
         None => return Ok(false),
     };
 
-    match signal::kill(Pid::from_raw(pid as i32), None) {
-        Ok(()) => Ok(true),
-        Err(nix::errno::Errno::ESRCH) => {
+    match crate::sys::check_pid(pid) {
+        Ok(true) => Ok(true),
+        Ok(false) => {
             let _ = std::fs::remove_file(paths.pid_file());
             Ok(false)
         }
-        Err(nix::errno::Errno::EPERM) => Ok(true),
-        Err(e) => Err(io::Error::other(e)),
+        Err(e) => Err(e),
     }
 }
 
@@ -47,18 +44,14 @@ pub async fn is_daemon_running(paths: &Paths) -> io::Result<bool> {
         None => return Ok(false),
     };
 
-    match signal::kill(Pid::from_raw(pid as i32), None) {
-        Ok(()) => Ok(true),
-        Err(nix::errno::Errno::ESRCH) => {
+    match crate::sys::check_pid(pid) {
+        Ok(true) => Ok(true),
+        Ok(false) => {
             // Process doesn't exist — stale PID file
             remove_pid_file(paths).await;
             Ok(false)
         }
-        Err(nix::errno::Errno::EPERM) => {
-            // Process exists but we lack permission to signal it
-            Ok(true)
-        }
-        Err(e) => Err(io::Error::other(e)),
+        Err(e) => Err(e),
     }
 }
 

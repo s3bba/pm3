@@ -1,10 +1,9 @@
 use crate::paths::Paths;
 use crate::pid;
 use crate::protocol::{self, Request, Response};
+use crate::sys;
 use color_eyre::eyre::{Context, bail};
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
 use std::time::Duration;
 
 pub fn send_request(paths: &Paths, request: &Request) -> color_eyre::Result<Response> {
@@ -58,10 +57,9 @@ fn ensure_daemon_running(paths: &Paths) -> color_eyre::Result<()> {
 
     spawn_daemon()?;
 
-    // Wait for socket file to appear
-    let socket = paths.socket_file();
+    // Wait for IPC endpoint to appear
     for _ in 0..50 {
-        if socket.exists() {
+        if sys::ipc_exists(paths) {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -73,14 +71,15 @@ fn ensure_daemon_running(paths: &Paths) -> color_eyre::Result<()> {
 fn spawn_daemon() -> color_eyre::Result<()> {
     let exe = std::env::current_exe().context("failed to get current executable path")?;
 
-    std::process::Command::new(exe)
-        .arg("--daemon")
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("--daemon")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0)
-        .spawn()
-        .context("failed to spawn daemon")?;
+        .stderr(std::process::Stdio::null());
+
+    sys::configure_daemon_cmd(&mut cmd);
+
+    cmd.spawn().context("failed to spawn daemon")?;
 
     Ok(())
 }
@@ -89,11 +88,9 @@ fn connect_with_retry(
     paths: &Paths,
     retries: u32,
     delay: Duration,
-) -> color_eyre::Result<UnixStream> {
-    let socket = paths.socket_file();
-
+) -> color_eyre::Result<sys::SyncIpcStream> {
     for attempt in 0..retries {
-        match UnixStream::connect(&socket) {
+        match sys::ipc_connect(paths) {
             Ok(stream) => return Ok(stream),
             Err(e) => {
                 if attempt == retries - 1 {

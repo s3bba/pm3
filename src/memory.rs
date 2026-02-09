@@ -60,6 +60,7 @@ pub fn parse_memory_string(s: &str) -> Result<u64, ProcessError> {
 // RSS reading
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 pub async fn read_rss_bytes(pid: u32) -> Option<u64> {
     let output = tokio::process::Command::new("ps")
         .args(["-o", "rss=", "-p", &pid.to_string()])
@@ -76,6 +77,11 @@ pub async fn read_rss_bytes(pid: u32) -> Option<u64> {
     Some(kb * 1024)
 }
 
+#[cfg(windows)]
+pub async fn read_rss_bytes(_pid: u32) -> Option<u64> {
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Process stats (CPU + memory)
 // ---------------------------------------------------------------------------
@@ -88,6 +94,7 @@ pub struct ProcessStats {
 
 pub type StatsCache = HashMap<u32, ProcessStats>;
 
+#[cfg(unix)]
 pub async fn read_process_stats(pid: u32) -> Option<(f64, u64)> {
     let output = tokio::process::Command::new("ps")
         .args(["-o", "%cpu=,rss=", "-p", &pid.to_string()])
@@ -105,6 +112,11 @@ pub async fn read_process_stats(pid: u32) -> Option<(f64, u64)> {
     let cpu: f64 = parts.next()?.parse().ok()?;
     let rss_kb: u64 = parts.next()?.parse().ok()?;
     Some((cpu, rss_kb * 1024))
+}
+
+#[cfg(windows)]
+pub async fn read_process_stats(_pid: u32) -> Option<(f64, u64)> {
+    None
 }
 
 pub fn spawn_stats_collector(
@@ -254,17 +266,16 @@ pub fn spawn_memory_monitor(
                     .as_deref()
                     .unwrap_or(process::DEFAULT_KILL_SIGNAL);
                 if let Ok(signal) = process::parse_signal(signal_name) {
-                    let pid = nix::unistd::Pid::from_raw(raw_pid as i32);
-                    let _ = nix::sys::signal::kill(pid, signal);
+                    let _ = crate::sys::send_signal(raw_pid, signal);
 
                     // Poll for process exit
                     let timeout_ms = config
                         .kill_timeout
                         .unwrap_or(process::DEFAULT_KILL_TIMEOUT_MS);
                     let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
-                    while nix::sys::signal::kill(pid, None).is_ok() {
+                    while crate::sys::is_pid_alive(raw_pid) {
                         if tokio::time::Instant::now() >= deadline {
-                            let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+                            let _ = crate::sys::force_kill(raw_pid);
                             tokio::time::sleep(Duration::from_millis(100)).await;
                             break;
                         }
@@ -376,6 +387,7 @@ mod tests {
         assert!(parse_memory_string("MB").is_err());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_read_rss_current_process() {
         let pid = std::process::id();
@@ -384,12 +396,14 @@ mod tests {
         assert!(rss.unwrap() > 0);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_read_rss_nonexistent_pid() {
         let rss = read_rss_bytes(999_999_999).await;
         assert!(rss.is_none());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_read_process_stats_current_process() {
         let pid = std::process::id();
@@ -400,6 +414,7 @@ mod tests {
         assert!(mem > 0);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_read_process_stats_nonexistent_pid() {
         let stats = read_process_stats(999_999_999).await;

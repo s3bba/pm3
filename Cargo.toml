@@ -14,7 +14,6 @@ crossterm = "0.27"
 dirs = "6"
 owo-colors = "4"
 ratatui = { version = "0.26", features = ["crossterm"] }
-nix = { version = "0.30", features = ["signal", "process"] }
 serde = { version = "1", features = ["derive"] }
 shell-words = "1"
 serde_json = "1"
@@ -24,6 +23,12 @@ toml = "0.8"
 reqwest = "0.13.1"
 notify = "7"
 cron = "0.15.0"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["signal", "process"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Threading", "Win32_Foundation"] }
 
 [dev-dependencies]
 assert_cmd = "2"

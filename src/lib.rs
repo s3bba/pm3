@@ -15,5 +15,6 @@ pub mod pid;
 pub mod process;
 pub mod protocol;
 pub mod startup;
+pub mod sys;
 pub mod tui;
 pub mod watch;

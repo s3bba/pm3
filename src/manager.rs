@@ -955,8 +955,7 @@ impl Manager {
             }
         };
 
-        let pid = nix::unistd::Pid::from_raw(raw_pid as i32);
-        if let Err(e) = nix::sys::signal::kill(pid, sig) {
+        if let Err(e) = crate::sys::send_signal(raw_pid, sig) {
             return Response::Error {
                 message: format!("failed to send signal to '{}': {}", name, e),
             };
@@ -1196,5 +1195,5 @@ struct DumpEntry {
 }
 
 fn is_pid_alive(pid: u32) -> bool {
-    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+    crate::sys::is_pid_alive(pid)
 }
