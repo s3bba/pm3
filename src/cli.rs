@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "pm3", about = "A Rust process manager")]
+#[command(name = "pm3", about = "A process manager")]
 pub struct Cli {
     #[arg(long, hide = true)]
     pub daemon: bool,
