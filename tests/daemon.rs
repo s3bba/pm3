@@ -30,7 +30,6 @@ fn test_config(command: &str) -> ProcessConfig {
         group: None,
         pre_start: None,
         post_stop: None,
-        notify: None,
         cron_restart: None,
         log_date_format: None,
         environments: HashMap::new(),

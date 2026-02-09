@@ -54,7 +54,6 @@ pub struct ProcessConfig {
     pub group: Option<String>,
     pub pre_start: Option<String>,
     pub post_stop: Option<String>,
-    pub notify: Option<String>,
     pub cron_restart: Option<String>,
     pub log_date_format: Option<String>,
     pub environments: HashMap<String, HashMap<String, String>>,
@@ -120,7 +119,6 @@ struct RawProcessConfig {
     group: Option<String>,
     pre_start: Option<String>,
     post_stop: Option<String>,
-    notify: Option<String>,
     cron_restart: Option<String>,
     log_date_format: Option<String>,
     #[serde(flatten)]
@@ -198,7 +196,6 @@ pub fn parse_config(content: &str) -> Result<HashMap<String, ProcessConfig>, Con
                 group: raw.group,
                 pre_start: raw.pre_start,
                 post_stop: raw.post_stop,
-                notify: raw.notify,
                 cron_restart: raw.cron_restart,
                 log_date_format: raw.log_date_format,
                 environments,
@@ -237,7 +234,6 @@ restart = "on_failure"
 group = "backend"
 pre_start = "npm run migrate"
 post_stop = "echo stopped"
-notify = "slack"
 cron_restart = "0 3 * * *"
 log_date_format = "%Y-%m-%d %H:%M:%S"
 
@@ -275,7 +271,6 @@ DATABASE_URL = "postgres://prod/db"
         assert_eq!(web.group.as_deref(), Some("backend"));
         assert_eq!(web.pre_start.as_deref(), Some("npm run migrate"));
         assert_eq!(web.post_stop.as_deref(), Some("echo stopped"));
-        assert_eq!(web.notify.as_deref(), Some("slack"));
         assert_eq!(web.cron_restart.as_deref(), Some("0 3 * * *"));
         assert_eq!(web.log_date_format.as_deref(), Some("%Y-%m-%d %H:%M:%S"));
         assert_eq!(
@@ -350,7 +345,6 @@ command = "cargo run"
         assert!(api.group.is_none());
         assert!(api.pre_start.is_none());
         assert!(api.post_stop.is_none());
-        assert!(api.notify.is_none());
         assert!(api.cron_restart.is_none());
         assert!(api.log_date_format.is_none());
         assert!(api.environments.is_empty());
@@ -494,7 +488,6 @@ DATABASE_URL = "postgres://staging/db"
             group: None,
             pre_start: None,
             post_stop: None,
-            notify: None,
             cron_restart: None,
             log_date_format: None,
             environments: HashMap::new(),

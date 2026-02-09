@@ -26,7 +26,6 @@ kill_signal = "SIGINT"
 depends_on = ["db"]
 group = "backend"
 pre_start = "npm run build"
-notify = "webhook://https://hooks.slack.com/..."
 watch = "./src"
 watch_ignore = ["node_modules", ".git", "logs"]
 cron_restart = "0 3 * * *"
@@ -42,13 +41,13 @@ restart = "on-failure"
 group = "backend"
 ```
 
-Fields: `command` (required), `cwd`, `env`, `env_file`, `env_<name>`, `health_check`, `kill_timeout`, `kill_signal`, `max_restarts`, `max_memory`, `min_uptime`, `stop_exit_codes`, `watch`, `watch_ignore`, `depends_on`, `restart`, `group`, `pre_start`, `post_stop`, `notify`, `cron_restart`, `log_date_format`.
+Fields: `command` (required), `cwd`, `env`, `env_file`, `env_<name>`, `health_check`, `kill_timeout`, `kill_signal`, `max_restarts`, `max_memory`, `min_uptime`, `stop_exit_codes`, `watch`, `watch_ignore`, `depends_on`, `restart`, `group`, `pre_start`, `post_stop`, `cron_restart`, `log_date_format`.
 
 ---
 
 ## Two Interfaces
 
-1. **Interactive TUI** — run `pm3` with no arguments to open a full TUI where you can do everything visually
+1. **Interactive TUI** — run `pm3 tui` to open a full TUI where you can do everything visually
 2. **CLI subcommands** — `pm3 start`, `pm3 stop`, `pm3 log`, etc. for scripting, CI, and quick one-offs
 
 Both talk to the same background daemon.
@@ -79,7 +78,6 @@ Both talk to the same background daemon.
 | `pm3 signal <name> <sig>` | Send an arbitrary signal (SIGHUP, SIGUSR1, etc.) |
 | `pm3 save` | Snapshot current process list to disk |
 | `pm3 resurrect` | Restore processes from last snapshot |
-| `pm3 deploy <env>` | Deploy to remote servers over SSH |
 | `pm3 startup` | Generate system service for boot auto-start |
 | `pm3 unstartup` | Remove the generated service file |
 | `pm3 flush [name]` | Clear log files |
@@ -169,7 +167,6 @@ Both talk to the same background daemon.
 - `pm3 init` — interactive wizard that asks questions to generate pm3.toml
 - Prompts for: process name, command, working directory, env vars, health check, restart policy, dependencies, group
 - Asks "Add another process?" to define multiple processes in one session
-- Scans the current directory for hints (Procfile, package.json scripts, docker-compose.yml) and suggests defaults
 - Writes the final pm3.toml to the current directory
 
 ## Graceful Shutdown
@@ -204,30 +201,14 @@ Both talk to the same background daemon.
 - Background stats collection in daemon (poll CPU/memory every 2s)
 
 ## State Persistence
-- Daemon persists process state to a JSON dump file
-- On daemon restart, restore process list and check which PIDs are still alive
-- Processes that died while daemon was down get auto-restarted
+- Daemon persists process state to a JSON dump file (`dump.json`)
+- On daemon startup, if `dump.json` exists, processes are automatically restored (same logic as `pm3 resurrect`)
+- Restored processes that are still alive are re-adopted; dead ones are re-spawned
 
 ## Save & Resurrect
 - `pm3 save` — snapshot the current running process list to disk
 - `pm3 resurrect` — restore and start all processes from the last snapshot
 - Useful when the daemon restarts — avoids re-running `pm3 start` in each project directory
-
-## Deployment
-- `pm3 deploy <env>` — deploy to remote servers over SSH
-- Configured in pm3.toml under a `[deploy]` section:
-  ```toml
-  [deploy.production]
-  host = "server.example.com"
-  user = "deploy"
-  path = "/var/www/app"
-  repo = "git@github.com:user/repo.git"
-  ref = "origin/main"
-  pre_deploy = "git pull"
-  post_deploy = "pm3 start"
-  ```
-- Commands: `pm3 deploy production setup`, `pm3 deploy production`, `pm3 deploy production revert`
-- Lifecycle hooks: `pre_deploy`, `post_deploy`
 
 ## Startup Script Generation
 - `pm3 startup` — generate a system service file for boot auto-start
@@ -511,13 +492,13 @@ Every step must be thoroughly tested before moving to the next. No exceptions.
     <!-- - Integration: saving writes valid TOML back to file -->
     <!-- - Integration: applying config changes restarts affected processes -->
 
-### Phase 10 — Init, deploy, startup
+### Phase 10 — Init, startup
 ~~45. Init wizard — `pm3 init`, interactive prompts, asks a bunch of questions and generates a pm3.toml~~
     - ~~E2E: generated pm3.toml is valid and parseable~~
     - ~~E2E: `pm3 init` in a directory with existing pm3.toml warns before overwriting~~
 
-46. Startup script generation — `pm3 startup` / `pm3 unstartup`
-    - Integration: on macOS, generates a valid launchd plist
-    - Integration: on Linux, generates a valid systemd unit file
-    - E2E: `pm3 unstartup` removes the generated file
-    - Unit: generated file content is correct (paths, user, etc.)
+~~46. Startup script generation — `pm3 startup` / `pm3 unstartup`~~
+    - ~~Integration: on macOS, generates a valid launchd plist~~
+    - ~~Integration: on Linux, generates a valid systemd unit file~~
+    - ~~E2E: `pm3 unstartup` removes the generated file~~
+    - ~~Unit: generated file content is correct (paths, user, etc.)~~

@@ -1530,12 +1530,15 @@ command = "sleep 888"
     // Kill daemon
     kill_daemon(&data_dir, work_dir);
 
-    // Resurrect — this auto-starts the daemon and restores processes
+    // Resurrect — daemon auto-restores from dump on startup, so the explicit
+    // resurrect may find processes already running
     pm3(&data_dir, work_dir)
         .arg("resurrect")
         .assert()
         .success()
-        .stdout(predicate::str::contains("resurrected"));
+        .stdout(
+            predicate::str::contains("resurrected").or(predicate::str::contains("already running")),
+        );
 
     std::thread::sleep(Duration::from_millis(500));
 
@@ -1607,11 +1610,15 @@ cwd = "{}"
     )
     .unwrap();
 
+    // Daemon auto-restores from dump on startup, so the explicit resurrect
+    // may find processes already running
     pm3(&data_dir, &other_dir)
         .arg("resurrect")
         .assert()
         .success()
-        .stdout(predicate::str::contains("resurrected"));
+        .stdout(
+            predicate::str::contains("resurrected").or(predicate::str::contains("already running")),
+        );
 
     std::thread::sleep(Duration::from_millis(500));
 

@@ -28,6 +28,8 @@ pub async fn run(paths: Paths) -> color_eyre::Result<()> {
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let manager = Manager::new(paths.clone());
 
+    manager.auto_restore().await;
+
     memory::spawn_stats_collector(
         manager.processes(),
         manager.stats_cache(),

@@ -631,31 +631,20 @@ impl Manager {
         }
     }
 
-    pub async fn resurrect(&self) -> Response {
+    /// Core restore logic shared by `resurrect` (CLI command) and `auto_restore` (daemon startup).
+    /// Returns `Ok(restored_names)` on success, `Err(message)` on failure.
+    async fn restore_from_dump(&self) -> Result<Vec<String>, String> {
         let dump_path = self.paths.dump_file();
         if !dump_path.exists() {
-            return Response::Error {
-                message: "no dump file found".to_string(),
-            };
+            return Err("no dump file found".to_string());
         }
 
-        let data = match fs::read_to_string(&dump_path).await {
-            Ok(d) => d,
-            Err(e) => {
-                return Response::Error {
-                    message: format!("failed to read dump file: {}", e),
-                };
-            }
-        };
+        let data = fs::read_to_string(&dump_path)
+            .await
+            .map_err(|e| format!("failed to read dump file: {}", e))?;
 
-        let entries: Vec<DumpEntry> = match serde_json::from_str(&data) {
-            Ok(e) => e,
-            Err(e) => {
-                return Response::Error {
-                    message: format!("failed to parse dump file: {}", e),
-                };
-            }
-        };
+        let entries: Vec<DumpEntry> =
+            serde_json::from_str(&data).map_err(|e| format!("failed to parse dump file: {}", e))?;
 
         let already_running: Vec<String> = {
             let table = self.processes.read().await;
@@ -672,9 +661,7 @@ impl Manager {
             .collect();
 
         if to_restore.is_empty() {
-            return Response::Success {
-                message: Some("all processes already running".to_string()),
-            };
+            return Ok(vec![]);
         }
 
         let subset_configs: HashMap<String, ProcessConfig> = to_restore
@@ -682,20 +669,9 @@ impl Manager {
             .map(|e| (e.name.clone(), e.config.clone()))
             .collect();
 
-        if let Err(e) = deps::validate_deps(&subset_configs) {
-            return Response::Error {
-                message: e.to_string(),
-            };
-        }
+        deps::validate_deps(&subset_configs).map_err(|e| e.to_string())?;
 
-        let levels = match deps::topological_levels(&subset_configs) {
-            Ok(l) => l,
-            Err(e) => {
-                return Response::Error {
-                    message: e.to_string(),
-                };
-            }
-        };
+        let levels = deps::topological_levels(&subset_configs).map_err(|e| e.to_string())?;
 
         let entry_map: HashMap<String, &DumpEntry> =
             to_restore.iter().map(|e| (e.name.clone(), e)).collect();
@@ -768,9 +744,7 @@ impl Manager {
                                 level_names.push(name.clone());
                             }
                             Err(e) => {
-                                return Response::Error {
-                                    message: format!("failed to resurrect '{}': {}", name, e),
-                                };
+                                return Err(format!("failed to resurrect '{}': {}", name, e));
                             }
                         }
                     }
@@ -847,12 +821,43 @@ impl Manager {
                 && !level_names.is_empty()
                 && let Err(msg) = wait_for_online(&level_names, &self.processes).await
             {
-                return Response::Error { message: msg };
+                return Err(msg);
             }
         }
 
-        Response::Success {
-            message: Some(format!("resurrected: {}", restored.join(", "))),
+        Ok(restored)
+    }
+
+    pub async fn resurrect(&self) -> Response {
+        match self.restore_from_dump().await {
+            Ok(restored) if restored.is_empty() => Response::Success {
+                message: Some("all processes already running".to_string()),
+            },
+            Ok(restored) => Response::Success {
+                message: Some(format!("resurrected: {}", restored.join(", "))),
+            },
+            Err(message) => Response::Error { message },
+        }
+    }
+
+    /// Auto-restore processes from dump file on daemon startup.
+    /// Silently skips if no dump file exists.
+    pub async fn auto_restore(&self) {
+        match self.restore_from_dump().await {
+            Ok(restored) if restored.is_empty() => {}
+            Ok(restored) => {
+                eprintln!(
+                    "auto-restored {} process(es): {}",
+                    restored.len(),
+                    restored.join(", ")
+                );
+            }
+            Err(msg) if msg == "no dump file found" => {
+                // No dump file — silently continue
+            }
+            Err(msg) => {
+                eprintln!("auto-restore failed: {}", msg);
+            }
         }
     }
 
