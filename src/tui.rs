@@ -12,11 +12,11 @@ use crossterm::{cursor, execute};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::{Frame, Terminal};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Padding, Paragraph, Row, Table, TableState,
 };
+use ratatui::{Frame, Terminal};
 use std::io;
 use std::time::{Duration, Instant};
 
