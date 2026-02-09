@@ -1063,7 +1063,17 @@ impl Manager {
                         any_received = true;
                     }
                     Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {}
-                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                        let resp = Response::LogLine {
+                            name: if multi { Some(target.clone()) } else { None },
+                            line: format!("[pm3: {n} log lines dropped due to lag]"),
+                        };
+                        let encoded = protocol::encode_response(&resp)?;
+                        if writer.write_all(&encoded).await.is_err() {
+                            return Ok(());
+                        }
+                        any_received = true;
+                    }
                     Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
                         return Ok(());
                     }
