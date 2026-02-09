@@ -811,6 +811,21 @@ impl Manager {
                             cr_rx,
                         );
                     }
+
+                    if let Some(pid) = entry.pid {
+                        let pm_rx = managed
+                            .monitor_shutdown
+                            .as_ref()
+                            .expect("monitor shutdown sender missing")
+                            .subscribe();
+                        process::spawn_pid_monitor(
+                            name.clone(),
+                            pid,
+                            Arc::clone(&self.processes),
+                            self.paths.clone(),
+                            pm_rx,
+                        );
+                    }
                 }
             }
 

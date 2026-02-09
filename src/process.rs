@@ -493,6 +493,38 @@ pub fn spawn_monitor(
     });
 }
 
+/// Monitor a reattached process by polling `is_pid_alive`.
+///
+/// Used during `restore_from_dump` where we have no `Child` handle.
+/// When the PID dies, `handle_child_exit` is called so restart policies apply.
+pub fn spawn_pid_monitor(
+    name: String,
+    pid: u32,
+    processes: Arc<RwLock<ProcessTable>>,
+    paths: Paths,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        return;
+                    }
+                }
+            }
+            if *shutdown_rx.borrow() {
+                return;
+            }
+            if !crate::sys::is_pid_alive(pid) {
+                handle_child_exit(&name, Some(pid), None, &processes, &paths).await;
+                return;
+            }
+        }
+    });
+}
+
 async fn handle_child_exit(
     name: &str,
     monitored_pid: Option<u32>,
