@@ -26,7 +26,7 @@ mod platform {
 
     pub fn send_signal(pid: u32, signal: Signal) -> io::Result<()> {
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), signal)
-            .map_err(|e| io::Error::other(e))
+            .map_err(io::Error::other)
     }
 
     pub fn is_pid_alive(pid: u32) -> bool {
