@@ -1,6 +1,6 @@
 # pm3
 
-A Rust-based process manager. Define processes in `pm3.toml`, manage them with simple commands.
+A process manager. Define processes in `pm3.toml`, manage them with simple commands.
 
 ## Quick Start
 
