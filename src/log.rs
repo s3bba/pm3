@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::io::{self, BufRead};
+use std::io;
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::sync::broadcast;
@@ -35,24 +35,58 @@ pub struct LogEntry {
 // ---------------------------------------------------------------------------
 
 pub fn tail_file(path: &Path, n: usize) -> io::Result<Vec<String>> {
+    use std::io::{Read, Seek};
+
     if n == 0 {
         return Ok(Vec::new());
     }
 
-    let file = match std::fs::File::open(path) {
+    let mut file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
 
-    let reader = io::BufReader::new(file);
-    let all_lines: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
-
-    if all_lines.len() <= n {
-        Ok(all_lines)
-    } else {
-        Ok(all_lines[all_lines.len() - n..].to_vec())
+    let len = file.metadata()?.len();
+    if len == 0 {
+        return Ok(Vec::new());
     }
+
+    // Read backwards in chunks to find the byte offset where the last N lines start.
+    const CHUNK: usize = 8192;
+    let mut newlines: usize = 0;
+    let mut pos = len;
+    let mut start_offset: u64 = 0;
+
+    'outer: while pos > 0 {
+        let read_start = pos.saturating_sub(CHUNK as u64);
+        let to_read = (pos - read_start) as usize;
+        let mut buf = vec![0u8; to_read];
+        file.seek(io::SeekFrom::Start(read_start))?;
+        file.read_exact(&mut buf)?;
+
+        for (i, &b) in buf.iter().enumerate().rev() {
+            if b == b'\n' {
+                newlines += 1;
+                if newlines > n {
+                    start_offset = read_start + (i as u64) + 1;
+                    break 'outer;
+                }
+            }
+        }
+        pos = read_start;
+    }
+
+    // Read from start_offset to end.
+    file.seek(io::SeekFrom::Start(start_offset))?;
+    let mut tail = String::new();
+    file.read_to_string(&mut tail)?;
+
+    let mut lines: Vec<String> = tail.lines().map(String::from).collect();
+    // If the file ends with \n, .lines() won't produce a trailing empty string,
+    // so `lines` has exactly the last N lines (or fewer).
+    lines.truncate(n);
+    Ok(lines)
 }
 
 // ---------------------------------------------------------------------------
