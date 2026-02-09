@@ -12,10 +12,10 @@ use crossterm::{cursor, execute};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::terminal::{Frame, Terminal};
+use ratatui::{Frame, Terminal};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState, block::Padding,
+    Block, BorderType, Borders, Cell, Padding, Paragraph, Row, Table, TableState,
 };
 use std::io;
 use std::time::{Duration, Instant};
@@ -159,7 +159,7 @@ fn handle_log_viewer_key(app: &mut App, code: KeyCode, paths: &Paths) -> bool {
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
-    let terminal_width = f.size().width;
+    let terminal_width = f.area().width;
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -170,7 +170,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             Constraint::Length(1), // spacer
             Constraint::Length(1), // footer
         ])
-        .split(f.size());
+        .split(f.area());
 
     render_header(f, app, layout[0]);
 
@@ -434,7 +434,7 @@ fn render_table(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect, termi
                 .border_style(Style::default().fg(ACCENT_DIM))
                 .padding(Padding::horizontal(1)),
         )
-        .highlight_style(Style::default())
+        .row_highlight_style(Style::default())
         .highlight_symbol("");
 
     f.render_stateful_widget(table, area, &mut app.table_state);
