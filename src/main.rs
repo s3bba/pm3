@@ -18,6 +18,14 @@ async fn main() -> color_eyre::Result<()> {
             pm3::init::run(&cwd)?;
             return Ok(());
         }
+        if matches!(command, Command::Startup) {
+            pm3::startup::install()?;
+            return Ok(());
+        }
+        if matches!(command, Command::Unstartup) {
+            pm3::startup::uninstall()?;
+            return Ok(());
+        }
         let paths = pm3::paths::Paths::new()?;
         if matches!(command, Command::Tui) {
             pm3::tui::run(&paths)?;
@@ -90,6 +98,8 @@ fn command_to_request(command: Command) -> color_eyre::Result<Request> {
         }),
         Command::Tui => unreachable!("tui is handled directly in main"),
         Command::Init => unreachable!("init is handled directly in main"),
+        Command::Startup => unreachable!("startup is handled directly in main"),
+        Command::Unstartup => unreachable!("unstartup is handled directly in main"),
         Command::Info { name } => Ok(Request::Info { name }),
         Command::Signal { name, signal } => Ok(Request::Signal { name, signal }),
         Command::Save => Ok(Request::Save),

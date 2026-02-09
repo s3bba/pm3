@@ -1672,6 +1672,12 @@ fn pm3_init(work_dir: &Path) -> Command {
     cmd
 }
 
+fn pm3_standalone() -> Command {
+    let mut cmd: Command = cargo_bin_cmd!("pm3");
+    cmd.timeout(Duration::from_secs(10));
+    cmd
+}
+
 #[test]
 fn test_e2e_init_generates_valid_toml() {
     let dir = TempDir::new().unwrap();
@@ -1763,4 +1769,127 @@ fn test_e2e_init_multiple_processes() {
     assert!(configs.contains_key("web"));
     assert!(configs.contains_key("worker"));
     assert_eq!(configs["worker"].depends_on, Some(vec!["web".to_string()]));
+}
+
+// ---------------------------------------------------------------------------
+// Startup / Unstartup E2E tests
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+fn expected_service_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap()
+        .join("Library/LaunchAgents/com.pm3.daemon.plist")
+}
+
+#[cfg(target_os = "linux")]
+fn expected_service_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap()
+        .join(".config/systemd/user/pm3.service")
+}
+
+#[test]
+fn test_e2e_startup_creates_service_file() {
+    let path = expected_service_path();
+
+    // Clean up from any prior runs
+    let _ = std::fs::remove_file(&path);
+
+    pm3_standalone()
+        .arg("startup")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Service installed"));
+
+    assert!(
+        path.exists(),
+        "service file should exist at {}",
+        path.display()
+    );
+
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        content.contains("--daemon"),
+        "service file should contain --daemon arg"
+    );
+
+    #[cfg(target_os = "macos")]
+    {
+        assert!(
+            content.contains("com.pm3.daemon"),
+            "plist should contain label"
+        );
+        assert!(
+            content.contains("RunAtLoad"),
+            "plist should contain RunAtLoad"
+        );
+    }
+    #[cfg(target_os = "linux")]
+    {
+        assert!(
+            content.contains("ExecStart="),
+            "unit should contain ExecStart"
+        );
+        assert!(
+            content.contains("[Service]"),
+            "unit should contain [Service] section"
+        );
+    }
+
+    // Clean up
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn test_e2e_unstartup_removes_service_file() {
+    let path = expected_service_path();
+
+    // Ensure the file exists first
+    let _ = std::fs::remove_file(&path);
+    pm3_standalone().arg("startup").assert().success();
+    assert!(path.exists(), "service file should exist before unstartup");
+
+    pm3_standalone()
+        .arg("unstartup")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Service removed"));
+
+    assert!(
+        !path.exists(),
+        "service file should be removed after unstartup"
+    );
+}
+
+#[test]
+fn test_e2e_unstartup_no_file_prints_message() {
+    let path = expected_service_path();
+
+    // Make sure no service file exists
+    let _ = std::fs::remove_file(&path);
+
+    pm3_standalone()
+        .arg("unstartup")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("No service file found"));
+}
+
+#[test]
+fn test_e2e_startup_idempotent() {
+    let path = expected_service_path();
+    let _ = std::fs::remove_file(&path);
+
+    // Run startup twice — second should overwrite without error
+    pm3_standalone().arg("startup").assert().success();
+    pm3_standalone().arg("startup").assert().success();
+
+    assert!(
+        path.exists(),
+        "service file should exist after double startup"
+    );
+
+    // Clean up
+    let _ = std::fs::remove_file(&path);
 }

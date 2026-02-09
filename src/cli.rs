@@ -46,6 +46,10 @@ pub enum Command {
     Resurrect,
     /// Clear log files for processes
     Flush { names: Vec<String> },
+    /// Generate a system service file for boot auto-start
+    Startup,
+    /// Remove the generated system service file
+    Unstartup,
     /// View process logs
     Log {
         name: Option<String>,
@@ -120,6 +124,18 @@ mod tests {
     fn test_init() {
         let cli = Cli::try_parse_from(["pm3", "init"]).unwrap();
         assert!(matches!(cli.command.unwrap(), Command::Init));
+    }
+
+    #[test]
+    fn test_startup() {
+        let cli = Cli::try_parse_from(["pm3", "startup"]).unwrap();
+        assert!(matches!(cli.command.unwrap(), Command::Startup));
+    }
+
+    #[test]
+    fn test_unstartup() {
+        let cli = Cli::try_parse_from(["pm3", "unstartup"]).unwrap();
+        assert!(matches!(cli.command.unwrap(), Command::Unstartup));
     }
 
     // Names handling
