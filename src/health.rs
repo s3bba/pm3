@@ -54,7 +54,7 @@ pub fn parse_health_check(url: &str) -> Result<HealthCheckTarget, ProcessError> 
 
 async fn check_http(client: &reqwest::Client, url: &str) -> bool {
     match client.get(url).send().await {
-        Ok(resp) => resp.status() == 200,
+        Ok(resp) => resp.status().is_success(),
         Err(_) => false,
     }
 }
