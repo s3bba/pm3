@@ -13,9 +13,30 @@ pub enum EnvFileError {
 fn strip_quotes(s: &str) -> String {
     if s.len() >= 2 {
         let bytes = s.as_bytes();
-        if (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
-        {
+        if bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+            let inner = &s[1..s.len() - 1];
+            let mut result = String::with_capacity(inner.len());
+            let mut chars = inner.chars();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    match chars.next() {
+                        Some('n') => result.push('\n'),
+                        Some('t') => result.push('\t'),
+                        Some('\\') => result.push('\\'),
+                        Some('"') => result.push('"'),
+                        Some(other) => {
+                            result.push('\\');
+                            result.push(other);
+                        }
+                        None => result.push('\\'),
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            return result;
+        }
+        if bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
             return s[1..s.len() - 1].to_string();
         }
     }
@@ -115,6 +136,48 @@ mod tests {
         let input = "  FOO  =  bar  ";
         let map = parse_env_contents(input);
         assert_eq!(map.get("FOO").unwrap(), "bar");
+    }
+
+    #[test]
+    fn test_double_quoted_escaped_quote() {
+        let input = r#"FOO="value with \" inside""#;
+        let map = parse_env_contents(input);
+        assert_eq!(map.get("FOO").unwrap(), "value with \" inside");
+    }
+
+    #[test]
+    fn test_double_quoted_escaped_backslash() {
+        let input = r#"FOO="path\\to\\file""#;
+        let map = parse_env_contents(input);
+        assert_eq!(map.get("FOO").unwrap(), "path\\to\\file");
+    }
+
+    #[test]
+    fn test_double_quoted_escaped_newline() {
+        let input = r#"FOO="line1\nline2""#;
+        let map = parse_env_contents(input);
+        assert_eq!(map.get("FOO").unwrap(), "line1\nline2");
+    }
+
+    #[test]
+    fn test_double_quoted_escaped_tab() {
+        let input = r#"FOO="col1\tcol2""#;
+        let map = parse_env_contents(input);
+        assert_eq!(map.get("FOO").unwrap(), "col1\tcol2");
+    }
+
+    #[test]
+    fn test_single_quoted_no_escape_processing() {
+        let input = r#"FOO='no \" escapes'"#;
+        let map = parse_env_contents(input);
+        assert_eq!(map.get("FOO").unwrap(), r#"no \" escapes"#);
+    }
+
+    #[test]
+    fn test_double_quoted_unknown_escape_keeps_backslash() {
+        let input = r#"FOO="unknown \x keeps backslash""#;
+        let map = parse_env_contents(input);
+        assert_eq!(map.get("FOO").unwrap(), r"unknown \x keeps backslash");
     }
 
     #[test]
