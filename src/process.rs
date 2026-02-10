@@ -193,7 +193,14 @@ impl ManagedProcess {
         let timeout_ms = self.config.kill_timeout.unwrap_or(DEFAULT_KILL_TIMEOUT_MS);
         let duration = Duration::from_millis(timeout_ms);
 
-        let _ = crate::sys::send_signal(raw_pid, signal);
+        if let Err(e) = crate::sys::send_signal(raw_pid, signal) {
+            eprintln!("failed to send {signal_name} to pid {raw_pid}: {e}");
+            if !crate::sys::is_pid_alive(raw_pid) {
+                self.pid = None;
+                self.status = ProcessStatus::Stopped;
+                return Ok(());
+            }
+        }
 
         // Poll for process exit
         let deadline = tokio::time::Instant::now() + duration;
