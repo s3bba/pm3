@@ -133,6 +133,8 @@ pub enum ConfigError {
     TomlParse(String),
     #[error("unknown field `{field}` in process `{process}`")]
     UnknownField { process: String, field: String },
+    #[error("invalid process name `{0}`: must not contain path separators or `..`")]
+    InvalidProcessName(String),
     #[error("{0}")]
     IoError(String),
 }
@@ -154,6 +156,10 @@ pub fn parse_config(content: &str) -> Result<HashMap<String, ProcessConfig>, Con
     let mut configs = HashMap::new();
 
     for (name, value) in table {
+        if name.contains('/') || name.contains('\\') || name.contains("..") {
+            return Err(ConfigError::InvalidProcessName(name));
+        }
+
         let raw: RawProcessConfig = value
             .try_into()
             .map_err(|e: toml::de::Error| ConfigError::TomlParse(e.to_string()))?;
@@ -526,5 +532,42 @@ B = "3"
 
         let vars = config.load_env_files().unwrap();
         assert_eq!(vars.get("FOO").unwrap(), "bar");
+    }
+
+    #[test]
+    fn test_path_traversal_rejected() {
+        let input = "[\"../../etc/foo\"]\ncommand = \"evil\"\n";
+        let result = parse_config(input);
+        assert_eq!(
+            result.unwrap_err(),
+            ConfigError::InvalidProcessName("../../etc/foo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_forward_slash_in_name_rejected() {
+        let input = "[\"foo/bar\"]\ncommand = \"evil\"\n";
+        let result = parse_config(input);
+        assert_eq!(
+            result.unwrap_err(),
+            ConfigError::InvalidProcessName("foo/bar".to_string())
+        );
+    }
+
+    #[test]
+    fn test_backslash_in_name_rejected() {
+        let input = "[\"foo\\\\bar\"]\ncommand = \"evil\"\n";
+        let result = parse_config(input);
+        assert_eq!(
+            result.unwrap_err(),
+            ConfigError::InvalidProcessName("foo\\bar".to_string())
+        );
+    }
+
+    #[test]
+    fn test_valid_process_name_accepted() {
+        let input = "[valid-name_123]\ncommand = \"echo hi\"\n";
+        let configs = parse_config(input).unwrap();
+        assert!(configs.contains_key("valid-name_123"));
     }
 }
