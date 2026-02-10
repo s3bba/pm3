@@ -92,10 +92,22 @@ pub fn spawn_health_checker(
             }
         };
 
-        let client = reqwest::Client::builder()
+        let client = match reqwest::Client::builder()
             .timeout(HEALTH_CHECK_ATTEMPT_TIMEOUT)
             .build()
-            .unwrap();
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("failed to build HTTP client for '{name}': {e}");
+                let mut table = processes.write().await;
+                if let Some(managed) = table.get_mut(&name)
+                    && managed.status == ProcessStatus::Starting
+                {
+                    managed.status = ProcessStatus::Unhealthy;
+                }
+                return;
+            }
+        };
 
         for _ in 0..HEALTH_CHECK_TIMEOUT_SECS {
             // Check shutdown signal
