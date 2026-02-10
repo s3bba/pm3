@@ -93,25 +93,25 @@ pub fn tail_file(path: &Path, n: usize) -> io::Result<Vec<String>> {
 // rotate_log — shift rotated files and rename current to .1
 // ---------------------------------------------------------------------------
 
-pub fn rotate_log(path: &Path, max_rotations: u32) -> io::Result<()> {
+pub async fn rotate_log(path: &Path, max_rotations: u32) -> io::Result<()> {
     // Delete the oldest rotated file if it exists
     let oldest = rotated_path(path, max_rotations);
-    if oldest.exists() {
-        std::fs::remove_file(&oldest)?;
+    if tokio::fs::try_exists(&oldest).await.unwrap_or(false) {
+        tokio::fs::remove_file(&oldest).await?;
     }
 
     // Shift .2 -> .3, .1 -> .2, etc.
     for i in (1..max_rotations).rev() {
         let from = rotated_path(path, i);
         let to = rotated_path(path, i + 1);
-        if from.exists() {
-            std::fs::rename(&from, &to)?;
+        if tokio::fs::try_exists(&from).await.unwrap_or(false) {
+            tokio::fs::rename(&from, &to).await?;
         }
     }
 
     // Rename current to .1
-    if path.exists() {
-        std::fs::rename(path, rotated_path(path, 1))?;
+    if tokio::fs::try_exists(path).await.unwrap_or(false) {
+        tokio::fs::rename(path, rotated_path(path, 1)).await?;
     }
 
     Ok(())
@@ -185,7 +185,7 @@ async fn run_log_copier(
             // Flush and close current file, rotate, reopen
             file.flush().await?;
             drop(file);
-            rotate_log(&log_path, LOG_ROTATION_KEEP)?;
+            rotate_log(&log_path, LOG_ROTATION_KEEP).await?;
             file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -281,13 +281,13 @@ mod tests {
         assert!(lines.is_empty());
     }
 
-    #[test]
-    fn test_rotate_log_creates_dot1() {
+    #[tokio::test]
+    async fn test_rotate_log_creates_dot1() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("app.log");
         std::fs::write(&path, "data").unwrap();
 
-        rotate_log(&path, 3).unwrap();
+        rotate_log(&path, 3).await.unwrap();
 
         assert!(!path.exists());
         assert!(rotated_path(&path, 1).exists());
@@ -297,14 +297,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_rotate_log_shifts_existing() {
+    #[tokio::test]
+    async fn test_rotate_log_shifts_existing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("app.log");
         std::fs::write(rotated_path(&path, 1), "old1").unwrap();
         std::fs::write(&path, "current").unwrap();
 
-        rotate_log(&path, 3).unwrap();
+        rotate_log(&path, 3).await.unwrap();
 
         assert!(!path.exists());
         assert_eq!(
@@ -317,8 +317,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_rotate_log_deletes_oldest() {
+    #[tokio::test]
+    async fn test_rotate_log_deletes_oldest() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("app.log");
         std::fs::write(rotated_path(&path, 1), "r1").unwrap();
@@ -326,7 +326,7 @@ mod tests {
         std::fs::write(rotated_path(&path, 3), "r3").unwrap();
         std::fs::write(&path, "current").unwrap();
 
-        rotate_log(&path, 3).unwrap();
+        rotate_log(&path, 3).await.unwrap();
 
         assert_eq!(
             std::fs::read_to_string(rotated_path(&path, 1)).unwrap(),
