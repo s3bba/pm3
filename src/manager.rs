@@ -42,12 +42,30 @@ impl Manager {
     }
 
     pub async fn shutdown_all(&self) {
-        let mut table = self.processes.write().await;
-        for (name, managed) in table.iter_mut() {
-            let _ = managed.graceful_stop().await;
-            if let Some(ref hook) = managed.config.post_stop {
-                let _ =
-                    process::run_hook(hook, name, managed.config.cwd.as_deref(), &self.paths).await;
+        let names: Vec<String> = {
+            let table = self.processes.read().await;
+            table.keys().cloned().collect()
+        };
+
+        for name in &names {
+            {
+                let mut table = self.processes.write().await;
+                if let Some(managed) = table.get_mut(name) {
+                    let _ = managed.graceful_stop().await;
+                }
+            }
+            // Run post_stop hook outside the lock
+            let hook_info = {
+                let table = self.processes.read().await;
+                table.get(name).and_then(|m| {
+                    m.config
+                        .post_stop
+                        .as_ref()
+                        .map(|hook| (hook.clone(), m.config.cwd.clone()))
+                })
+            };
+            if let Some((hook, cwd)) = hook_info {
+                let _ = process::run_hook(&hook, name, cwd.as_deref(), &self.paths).await;
             }
         }
     }
