@@ -981,6 +981,8 @@ impl Manager {
         }
     }
 
+    const MAX_LOG_LINES: usize = 10_000;
+
     pub async fn stream_logs(
         &self,
         name: Option<String>,
@@ -988,6 +990,7 @@ impl Manager {
         follow: bool,
         writer: &mut (impl AsyncWriteExt + Unpin),
     ) -> color_eyre::Result<()> {
+        let lines = lines.min(Self::MAX_LOG_LINES);
         let table = self.processes.read().await;
 
         let targets: Vec<String> = match name {
