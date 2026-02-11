@@ -274,8 +274,22 @@ pub async fn spawn_process(
     }
 
     cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
+
+    // On Unix, use a PTY for stdout so child processes see isatty(1) == true
+    // and keep line-buffered output instead of block-buffered.
+    // Stderr stays piped (it's unbuffered by default in C).
+    #[cfg(unix)]
+    let pty_reader = {
+        let (reader, slave_fd) = crate::sys::create_pty()?;
+        cmd.stdout(std::process::Stdio::from(slave_fd));
+        cmd.stderr(std::process::Stdio::piped());
+        Some(reader)
+    };
+    #[cfg(not(unix))]
+    {
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+    }
 
     let mut child = cmd.spawn().map_err(ProcessError::SpawnFailed)?;
     let pid = child.id();
@@ -283,14 +297,22 @@ pub async fn spawn_process(
     let (log_tx, _) = broadcast::channel(1024);
     let (monitor_tx, _monitor_rx) = watch::channel(false);
 
-    // Take ownership of piped streams
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-
     let log_date_format = config.log_date_format.clone();
 
-    // Spawn log copiers
-    if let Some(stdout) = stdout {
+    // Spawn stdout log copier
+    #[cfg(unix)]
+    if let Some(reader) = pty_reader {
+        log::spawn_log_copier(
+            name.clone(),
+            LogStream::Stdout,
+            reader,
+            paths.stdout_log(&name),
+            log_date_format.clone(),
+            log_tx.clone(),
+        );
+    }
+    #[cfg(not(unix))]
+    if let Some(stdout) = child.stdout.take() {
         log::spawn_log_copier(
             name.clone(),
             LogStream::Stdout,
@@ -301,7 +323,7 @@ pub async fn spawn_process(
         );
     }
 
-    if let Some(stderr) = stderr {
+    if let Some(stderr) = child.stderr.take() {
         log::spawn_log_copier(
             name.clone(),
             LogStream::Stderr,

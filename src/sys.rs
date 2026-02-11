@@ -14,6 +14,81 @@ mod platform {
 
     use crate::process::ProcessError;
 
+    // -- PTY support --
+
+    use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::unix::AsyncFd;
+
+    /// Async reader for the master side of a PTY.
+    ///
+    /// Wraps an `AsyncFd<OwnedFd>` and implements `AsyncRead`.
+    /// Treats `EIO` as EOF (happens when the slave side closes).
+    pub struct PtyReader {
+        inner: AsyncFd<OwnedFd>,
+    }
+
+    impl tokio::io::AsyncRead for PtyReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            loop {
+                let mut guard = match self.inner.poll_read_ready(cx) {
+                    Poll::Ready(Ok(guard)) => guard,
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => return Poll::Pending,
+                };
+
+                let result = guard.try_io(|inner| {
+                    let fd = unsafe { BorrowedFd::borrow_raw(inner.as_raw_fd()) };
+                    let unfilled = buf.initialize_unfilled();
+                    match nix::unistd::read(fd, unfilled) {
+                        Ok(0) => Ok(0),
+                        Ok(n) => {
+                            buf.advance(n);
+                            Ok(n)
+                        }
+                        Err(nix::errno::Errno::EIO) => {
+                            // EIO on PTY master means the slave side closed — treat as EOF
+                            Ok(0)
+                        }
+                        Err(nix::errno::Errno::EAGAIN) => {
+                            Err(io::Error::from(io::ErrorKind::WouldBlock))
+                        }
+                        Err(e) => Err(io::Error::from(e)),
+                    }
+                });
+
+                match result {
+                    Ok(Ok(_n)) => return Poll::Ready(Ok(())),
+                    Ok(Err(e)) => return Poll::Ready(Err(e)),
+                    Err(_would_block) => continue, // readiness was a false positive, retry
+                }
+            }
+        }
+    }
+
+    /// Create a PTY pair. Returns `(PtyReader, OwnedFd)` where the `OwnedFd`
+    /// is the slave fd to be passed as the child's stdout.
+    pub fn create_pty() -> io::Result<(PtyReader, OwnedFd)> {
+        let pty = nix::pty::openpty(None, None).map_err(io::Error::from)?;
+        let master: OwnedFd = pty.master;
+        let slave: OwnedFd = pty.slave;
+
+        // Set master fd to non-blocking for async I/O
+        nix::fcntl::fcntl(
+            master.as_fd(),
+            nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK),
+        )
+        .map_err(io::Error::from)?;
+
+        let async_fd = AsyncFd::new(master)?;
+        Ok((PtyReader { inner: async_fd }, slave))
+    }
+
     fn to_pid(pid: u32) -> io::Result<nix::unistd::Pid> {
         let raw = i32::try_from(pid).map_err(|_| {
             io::Error::new(
@@ -290,4 +365,145 @@ pub type SyncIpcStream = std::net::TcpStream;
 pub async fn ipc_accept(listener: &IpcListener) -> io::Result<IpcStream> {
     let (stream, _addr) = listener.accept().await?;
     Ok(stream)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::fd::AsRawFd;
+    use tokio::io::AsyncReadExt;
+
+    #[test]
+    fn test_create_pty_returns_valid_fds() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let (_reader, slave) = create_pty().unwrap();
+            assert!(slave.as_raw_fd() >= 0);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_pty_reader_reads_written_data() {
+        let (mut reader, slave) = create_pty().unwrap();
+
+        // Write to the slave side (simulates child process stdout)
+        let written = nix::unistd::write(&slave, b"hello from pty\n").unwrap();
+        assert!(written > 0);
+
+        let mut buf = vec![0u8; 256];
+        let n = reader.read(&mut buf).await.unwrap();
+        let output = String::from_utf8_lossy(&buf[..n]);
+        assert!(
+            output.contains("hello from pty"),
+            "expected 'hello from pty' in output, got: {output:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pty_reader_eof_on_slave_close() {
+        let (mut reader, slave) = create_pty().unwrap();
+
+        // Close the slave without writing — reader should get EOF (not hang)
+        drop(slave);
+
+        let mut buf = vec![0u8; 256];
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(2), reader.read(&mut buf)).await;
+        match result {
+            Ok(Ok(0)) => {} // EOF — expected
+            Ok(Ok(_)) => {} // some terminal init bytes — fine
+            Ok(Err(_)) => {}
+            Err(_) => panic!("reader should not hang after slave is closed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pty_reader_multiple_writes() {
+        let (mut reader, slave) = create_pty().unwrap();
+
+        for i in 0..5 {
+            let msg = format!("line {i}\n");
+            nix::unistd::write(&slave, msg.as_bytes()).unwrap();
+        }
+
+        // Read all lines
+        let mut buf = vec![0u8; 4096];
+        let mut collected = String::new();
+        // Read in a loop with a short timeout to collect all available data
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_millis(200), reader.read(&mut buf))
+                .await
+            {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => collected.push_str(&String::from_utf8_lossy(&buf[..n])),
+                Ok(Err(_)) => break,
+                Err(_) => break, // timeout — done reading
+            }
+        }
+
+        for i in 0..5 {
+            assert!(
+                collected.contains(&format!("line {i}")),
+                "missing 'line {i}' in output: {collected:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pty_slave_is_a_tty() {
+        let (_reader, slave) = create_pty().unwrap();
+        // The slave fd should report as a terminal
+        let is_tty = unsafe { nix::libc::isatty(slave.as_raw_fd()) };
+        assert_eq!(is_tty, 1, "slave fd should be a terminal");
+    }
+
+    #[tokio::test]
+    async fn test_pty_child_sees_isatty_true() {
+        let (mut reader, slave) = create_pty().unwrap();
+
+        // Spawn a child that tests isatty on fd 1, then sleeps to keep slave open.
+        // `test -t 1` checks if fd 1 is a terminal.
+        let mut child = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "if [ -t 1 ]; then echo IS_TTY; else echo NOT_TTY; fi; sleep 2",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::from(slave))
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("failed to spawn sh");
+
+        // Read output while child is still alive (slave fd still open)
+        let mut output = String::new();
+        loop {
+            let mut buf = vec![0u8; 256];
+            match tokio::time::timeout(std::time::Duration::from_secs(2), reader.read(&mut buf))
+                .await
+            {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    output.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if output.contains("IS_TTY") || output.contains("NOT_TTY") {
+                        break;
+                    }
+                }
+                Ok(Err(_)) => break,
+                Err(_) => break,
+            }
+        }
+
+        // Clean up child
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(
+            output.contains("IS_TTY"),
+            "child should see fd 1 as a terminal, got: {output:?}"
+        );
+    }
 }

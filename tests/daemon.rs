@@ -359,6 +359,90 @@ async fn test_log_capture_stderr() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_stdout_uses_pty_child_sees_tty() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    // Use sh to check if stdout (fd 1) is a terminal, then sleep to stay alive
+    let mut configs = HashMap::new();
+    configs.insert(
+        "tty-check".to_string(),
+        test_config("sh -c 'if [ -t 1 ]; then echo IS_TTY; else echo NOT_TTY; fi; sleep 60'"),
+    );
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stdout_log = paths.stdout_log("tty-check");
+    assert!(stdout_log.exists(), "stdout log file should exist");
+    let content = std::fs::read_to_string(&stdout_log).unwrap();
+    assert!(
+        content.contains("IS_TTY"),
+        "child stdout should report fd 1 as a terminal, got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_stderr_still_piped_not_tty() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    // Check that stderr is NOT a tty (stays piped)
+    let mut configs = HashMap::new();
+    configs.insert(
+        "stderr-tty-check".to_string(),
+        test_config(
+            "sh -c 'if [ -t 2 ]; then echo IS_TTY >&2; else echo NOT_TTY >&2; fi; sleep 60'",
+        ),
+    );
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stderr_log = paths.stderr_log("stderr-tty-check");
+    assert!(stderr_log.exists(), "stderr log file should exist");
+    let content = std::fs::read_to_string(&stderr_log).unwrap();
+    assert!(
+        content.contains("NOT_TTY"),
+        "child stderr should report fd 2 is not a terminal, got: {content}"
+    );
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_log_directory_created() {
     let dir = TempDir::new().unwrap();
     let paths = Paths::with_base(dir.path().to_path_buf());
