@@ -237,8 +237,7 @@ impl Manager {
                 .filter(|name| {
                     table
                         .get(*name)
-                        .map(|p| p.status == ProcessStatus::Errored)
-                        .unwrap_or(false)
+                        .is_some_and(|p| p.status == ProcessStatus::Errored)
                 })
                 .collect();
             if !failures.is_empty() {

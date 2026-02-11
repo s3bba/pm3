@@ -50,9 +50,8 @@ pub fn spawn_watcher(
     paths: Paths,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
-    let watch_path = match resolve_watch_path(&config) {
-        Some(p) => p,
-        None => return,
+    let Some(watch_path) = resolve_watch_path(&config) else {
+        return;
     };
 
     let ignore_patterns: Vec<String> = config.watch_ignore.clone().unwrap_or_default();
@@ -158,9 +157,8 @@ pub fn spawn_watcher(
             // Graceful stop
             let (old_config, old_restarts) = {
                 let mut table = processes.write().await;
-                let managed = match table.get_mut(&name) {
-                    Some(m) => m,
-                    None => return,
+                let Some(managed) = table.get_mut(&name) else {
+                    return;
                 };
 
                 // Signal the process monitor not to auto-restart

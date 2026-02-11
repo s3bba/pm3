@@ -405,7 +405,7 @@ pub fn evaluate_restart_policy(
     _uptime: Duration,
     restarts: u32,
 ) -> bool {
-    let policy = config.restart.clone().unwrap_or(RestartPolicy::OnFailure);
+    let policy = config.restart.unwrap_or(RestartPolicy::OnFailure);
     let max_restarts = config.max_restarts.unwrap_or(DEFAULT_MAX_RESTARTS);
 
     // Check if we've exceeded max restarts (reset logic handled by caller for min_uptime)

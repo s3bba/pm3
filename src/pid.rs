@@ -20,12 +20,11 @@ pub async fn remove_pid_file(paths: &Paths) {
 
 /// Synchronous version for use outside the tokio runtime (client-side).
 pub fn is_daemon_running_sync(paths: &Paths) -> io::Result<bool> {
-    let pid: u32 = match std::fs::read_to_string(paths.pid_file())
+    let Some(pid) = std::fs::read_to_string(paths.pid_file())
         .ok()
         .and_then(|s| s.trim().parse().ok())
-    {
-        Some(p) => p,
-        None => return Ok(false),
+    else {
+        return Ok(false);
     };
 
     match crate::sys::check_pid(pid) {
@@ -39,9 +38,8 @@ pub fn is_daemon_running_sync(paths: &Paths) -> io::Result<bool> {
 }
 
 pub async fn is_daemon_running(paths: &Paths) -> io::Result<bool> {
-    let pid = match read_pid_file(paths).await {
-        Some(p) => p,
-        None => return Ok(false),
+    let Some(pid) = read_pid_file(paths).await else {
+        return Ok(false);
     };
 
     match crate::sys::check_pid(pid) {

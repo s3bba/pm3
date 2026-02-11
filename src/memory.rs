@@ -194,15 +194,11 @@ pub fn spawn_memory_monitor(
                 }
             };
 
-            let pid = match pid {
-                Some(p) => p,
-                None => continue,
-            };
+            let Some(pid) = pid else { continue };
 
             // Read RSS
-            let rss = match read_rss_bytes(pid).await {
-                Some(r) => r,
-                None => continue,
+            let Some(rss) = read_rss_bytes(pid).await else {
+                continue;
             };
 
             if rss <= max_bytes {

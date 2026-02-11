@@ -46,9 +46,8 @@ pub fn spawn_cron_restart(
 
         loop {
             // Calculate duration until next run
-            let sleep_dur = match next_run_duration(&schedule) {
-                Some(d) => d,
-                None => return,
+            let Some(sleep_dur) = next_run_duration(&schedule) else {
+                return;
             };
 
             // Sleep until next cron time, listening for shutdown
@@ -85,9 +84,8 @@ pub fn spawn_cron_restart(
             // Graceful stop
             let (old_config, old_restarts) = {
                 let mut table = processes.write().await;
-                let managed = match table.get_mut(&name) {
-                    Some(m) => m,
-                    None => return,
+                let Some(managed) = table.get_mut(&name) else {
+                    return;
                 };
 
                 if let Some(ref tx) = managed.monitor_shutdown {
