@@ -175,6 +175,7 @@ async fn run_log_copier(
         }
 
         file.write_all(line_bytes).await?;
+        file.flush().await?;
         byte_count += line_bytes.len() as u64;
 
         // Broadcast to any follow subscribers (ignore if no receivers)
