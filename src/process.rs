@@ -10,10 +10,6 @@ use tokio::fs;
 use tokio::process::{Child, Command};
 use tokio::sync::{RwLock, broadcast, watch};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 pub const DEFAULT_KILL_TIMEOUT_MS: u64 = 5000;
 pub const DEFAULT_KILL_SIGNAL: &str = "SIGTERM";
 pub const DEFAULT_MAX_RESTARTS: u32 = 15;
@@ -21,10 +17,6 @@ pub const BACKOFF_BASE_MS: u64 = 100;
 pub const BACKOFF_CAP_MS: u64 = 30_000;
 pub const DEFAULT_MIN_UPTIME_MS: u64 = 1000;
 pub const SPAWN_VERIFY_DELAY_MS: u64 = 50;
-
-// ---------------------------------------------------------------------------
-// Error
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProcessError {
@@ -44,10 +36,6 @@ pub enum ProcessError {
     ImmediateExit { exit_code: Option<i32> },
 }
 
-// ---------------------------------------------------------------------------
-// Command parsing
-// ---------------------------------------------------------------------------
-
 pub fn parse_command(command: &str) -> Result<(String, Vec<String>), ProcessError> {
     let words = shell_words::split(command)
         .map_err(|e| ProcessError::InvalidCommand(format!("failed to parse: {e}")))?;
@@ -61,17 +49,9 @@ pub fn parse_command(command: &str) -> Result<(String, Vec<String>), ProcessErro
     Ok((program, args))
 }
 
-// ---------------------------------------------------------------------------
-// Signal parsing
-// ---------------------------------------------------------------------------
-
 pub fn parse_signal(name: &str) -> Result<crate::sys::Signal, ProcessError> {
     crate::sys::parse_signal(name)
 }
-
-// ---------------------------------------------------------------------------
-// Lifecycle hooks
-// ---------------------------------------------------------------------------
 
 pub async fn run_hook(
     hook: &str,
@@ -112,10 +92,6 @@ pub async fn run_hook(
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// ManagedProcess
-// ---------------------------------------------------------------------------
 
 pub struct ManagedProcess {
     pub name: String,
@@ -221,10 +197,6 @@ impl ManagedProcess {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Monitor helpers
-// ---------------------------------------------------------------------------
-
 pub fn spawn_aux_monitors(
     name: String,
     config: ProcessConfig,
@@ -268,15 +240,7 @@ pub fn spawn_aux_monitors(
     }
 }
 
-// ---------------------------------------------------------------------------
-// ProcessTable
-// ---------------------------------------------------------------------------
-
 pub type ProcessTable = HashMap<String, ManagedProcess>;
-
-// ---------------------------------------------------------------------------
-// Spawning
-// ---------------------------------------------------------------------------
 
 pub async fn spawn_process(
     name: String,
@@ -435,10 +399,6 @@ pub async fn spawn_and_attach(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Restart policy evaluation
-// ---------------------------------------------------------------------------
-
 pub fn evaluate_restart_policy(
     config: &ProcessConfig,
     exit_code: Option<i32>,
@@ -479,10 +439,6 @@ pub fn compute_backoff(restart_count: u32) -> Duration {
     let ms = BACKOFF_BASE_MS.saturating_mul(2u64.saturating_pow(restart_count));
     Duration::from_millis(ms.min(BACKOFF_CAP_MS))
 }
-
-// ---------------------------------------------------------------------------
-// Process monitor task
-// ---------------------------------------------------------------------------
 
 pub fn spawn_monitor(
     name: String,
@@ -624,10 +580,6 @@ async fn handle_child_exit(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,20 +637,6 @@ mod tests {
             result.unwrap_err(),
             ProcessError::InvalidCommand(_)
         ));
-    }
-
-    // -------------------------------------------------------------------
-    // Graceful stop constants & parse_signal
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn test_default_kill_timeout() {
-        assert_eq!(DEFAULT_KILL_TIMEOUT_MS, 5000);
-    }
-
-    #[test]
-    fn test_default_kill_signal() {
-        assert_eq!(DEFAULT_KILL_SIGNAL, "SIGTERM");
     }
 
     #[cfg(unix)]
@@ -762,20 +700,6 @@ mod tests {
             ProcessError::InvalidSignal(_)
         ));
     }
-
-    #[test]
-    fn test_config_kill_timeout_default_when_none() {
-        assert_eq!(DEFAULT_KILL_TIMEOUT_MS, 5000);
-    }
-
-    #[test]
-    fn test_config_kill_signal_default_when_none() {
-        assert_eq!(DEFAULT_KILL_SIGNAL, "SIGTERM");
-    }
-
-    // -------------------------------------------------------------------
-    // Restart policy
-    // -------------------------------------------------------------------
 
     fn test_config(restart: Option<RestartPolicy>) -> ProcessConfig {
         ProcessConfig {
@@ -935,10 +859,6 @@ mod tests {
         ));
     }
 
-    // -------------------------------------------------------------------
-    // Backoff
-    // -------------------------------------------------------------------
-
     #[test]
     fn test_backoff_sequence() {
         assert_eq!(compute_backoff(0), Duration::from_millis(100));
@@ -954,10 +874,6 @@ mod tests {
         assert_eq!(compute_backoff(20), Duration::from_millis(BACKOFF_CAP_MS));
         assert_eq!(compute_backoff(30), Duration::from_millis(BACKOFF_CAP_MS));
     }
-
-    // -------------------------------------------------------------------
-    // min_uptime
-    // -------------------------------------------------------------------
 
     #[test]
     fn test_min_uptime_resets_counter_before_policy_check() {

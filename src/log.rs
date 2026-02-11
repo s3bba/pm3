@@ -4,19 +4,11 @@ use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::sync::broadcast;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// 10 MB rotation threshold
 pub const LOG_ROTATION_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Keep up to 3 rotated files (.1, .2, .3)
 pub const LOG_ROTATION_KEEP: u32 = 3;
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogStream {
@@ -29,10 +21,6 @@ pub struct LogEntry {
     pub stream: LogStream,
     pub line: String,
 }
-
-// ---------------------------------------------------------------------------
-// tail_file — read last N lines from a file
-// ---------------------------------------------------------------------------
 
 pub fn tail_file(path: &Path, n: usize) -> io::Result<Vec<String>> {
     use std::io::{Read, Seek};
@@ -89,10 +77,6 @@ pub fn tail_file(path: &Path, n: usize) -> io::Result<Vec<String>> {
     Ok(lines)
 }
 
-// ---------------------------------------------------------------------------
-// rotate_log — shift rotated files and rename current to .1
-// ---------------------------------------------------------------------------
-
 pub async fn rotate_log(path: &Path, max_rotations: u32) -> io::Result<()> {
     // Delete the oldest rotated file if it exists
     let oldest = rotated_path(path, max_rotations);
@@ -122,10 +106,6 @@ fn rotated_path(path: &Path, n: u32) -> std::path::PathBuf {
     p.push(format!(".{n}"));
     p.into()
 }
-
-// ---------------------------------------------------------------------------
-// spawn_log_copier — tokio task that reads piped child output
-// ---------------------------------------------------------------------------
 
 pub fn spawn_log_copier(
     name: String,
@@ -207,10 +187,6 @@ async fn run_log_copier(
     file.flush().await?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -343,18 +319,6 @@ mod tests {
         // r3 was deleted
     }
 
-    #[test]
-    fn test_rotation_size_constant() {
-        assert_eq!(LOG_ROTATION_SIZE, 10 * 1024 * 1024);
-    }
-
-    #[test]
-    fn test_rotation_keep_constant() {
-        assert_eq!(LOG_ROTATION_KEEP, 3);
-    }
-
-    // ── Item 16: Log timestamp tests ────────────────────────────────
-
     /// Helper: pipe `lines` through `run_log_copier` with the given format,
     /// return the resulting log file contents.
     async fn run_copier_with_format(fmt: Option<&str>, lines: &[&str]) -> String {
@@ -434,8 +398,6 @@ mod tests {
             assert!(re.is_match(line), "line did not match pattern: {line}");
         }
     }
-
-    // ── Item 17: Log rotation threshold tests ─────────────────────────
 
     /// Helper: pipe `data` through `run_log_copier`, return `(TempDir, PathBuf)`
     /// so callers can inspect rotated sibling files.

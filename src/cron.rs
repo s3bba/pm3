@@ -6,11 +6,6 @@ use cron::Schedule;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
-
-// ---------------------------------------------------------------------------
-// Parsing
-// ---------------------------------------------------------------------------
-
 pub fn parse_cron_expression(expr: &str) -> Result<Schedule, process::ProcessError> {
     let trimmed = expr.trim();
     // The `cron` crate requires 6 or 7 fields (sec min hour day month dow [year]).
@@ -33,11 +28,6 @@ pub fn next_run_duration(schedule: &Schedule) -> Option<std::time::Duration> {
     let delta = next - now;
     delta.to_std().ok()
 }
-
-// ---------------------------------------------------------------------------
-// Cron restart task
-// ---------------------------------------------------------------------------
-
 pub fn spawn_cron_restart(
     name: String,
     cron_expr: String,
@@ -139,11 +129,6 @@ pub fn spawn_cron_restart(
         }
     });
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;

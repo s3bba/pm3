@@ -5,27 +5,15 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, watch};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 pub const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 pub const HEALTH_CHECK_TIMEOUT_SECS: u32 = 30;
 pub const HEALTH_CHECK_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum HealthCheckTarget {
     Http(String),
     Tcp(String, u16),
 }
-
-// ---------------------------------------------------------------------------
-// Parsing
-// ---------------------------------------------------------------------------
 
 pub fn parse_health_check(url: &str) -> Result<HealthCheckTarget, ProcessError> {
     if url.starts_with("http://") || url.starts_with("https://") {
@@ -57,10 +45,6 @@ pub fn parse_health_check(url: &str) -> Result<HealthCheckTarget, ProcessError> 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Probes
-// ---------------------------------------------------------------------------
-
 async fn check_http(client: &reqwest::Client, url: &str) -> bool {
     match client.get(url).send().await {
         Ok(resp) => resp.status().is_success(),
@@ -79,10 +63,6 @@ async fn check_tcp(host: &str, port: u16) -> bool {
         .map(|r| r.is_ok())
         .unwrap_or(false)
 }
-
-// ---------------------------------------------------------------------------
-// Health checker task
-// ---------------------------------------------------------------------------
 
 pub fn spawn_health_checker(
     name: String,
@@ -173,10 +153,6 @@ pub fn spawn_health_checker(
         }
     });
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

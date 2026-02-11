@@ -36,10 +36,6 @@ pub fn uninstall() -> color_eyre::Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Platform-specific: service file path
-// ---------------------------------------------------------------------------
-
 #[cfg(target_os = "macos")]
 fn service_file_path() -> color_eyre::Result<PathBuf> {
     let Some(home) = dirs::home_dir() else {
@@ -61,10 +57,6 @@ fn service_file_path() -> color_eyre::Result<PathBuf> {
     bail!("startup/unstartup is not supported on this platform");
 }
 
-// ---------------------------------------------------------------------------
-// Platform-specific: generate service content
-// ---------------------------------------------------------------------------
-
 #[cfg(target_os = "macos")]
 fn generate_service_content(exe_path: &str) -> String {
     generate_launchd_plist(exe_path)
@@ -79,10 +71,6 @@ fn generate_service_content(exe_path: &str) -> String {
 fn generate_service_content(_exe_path: &str) -> String {
     String::new()
 }
-
-// ---------------------------------------------------------------------------
-// Platform-specific: post-install / pre-uninstall hooks
-// ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
 fn post_install(path: &std::path::Path) {
@@ -156,10 +144,6 @@ fn post_install(_path: &std::path::Path) {}
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn pre_uninstall(_path: &std::path::Path) {}
 
-// ---------------------------------------------------------------------------
-// Content generators (always compiled, for testing on any platform)
-// ---------------------------------------------------------------------------
-
 pub fn generate_launchd_plist(exe_path: &str) -> String {
     let log_dir = dirs::data_dir()
         .map(|d| d.join("pm3").join("logs"))
@@ -216,8 +200,6 @@ WantedBy=default.target
 mod tests {
     use super::*;
 
-    // ── Plist generator tests ───────────────────────────────────────
-
     #[test]
     fn test_plist_contains_label() {
         let plist = generate_launchd_plist("/usr/local/bin/pm3");
@@ -268,8 +250,6 @@ mod tests {
         assert!(plist.contains("</dict>"));
     }
 
-    // ── Systemd unit generator tests ────────────────────────────────
-
     #[test]
     fn test_systemd_contains_exec_start() {
         let unit = generate_systemd_unit("/usr/local/bin/pm3");
@@ -301,8 +281,6 @@ mod tests {
         let unit = generate_systemd_unit("/usr/local/bin/pm3");
         assert!(unit.contains("WantedBy=default.target"));
     }
-
-    // ── Platform path tests ─────────────────────────────────────────
 
     #[cfg(target_os = "macos")]
     #[test]

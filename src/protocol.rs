@@ -2,10 +2,6 @@ use crate::config::ProcessConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// ---------------------------------------------------------------------------
-// Request
-// ---------------------------------------------------------------------------
-
 fn default_log_lines() -> usize {
     15
 }
@@ -57,10 +53,6 @@ pub enum Request {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Response
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
@@ -83,10 +75,6 @@ pub enum Response {
         line: String,
     },
 }
-
-// ---------------------------------------------------------------------------
-// Supporting types
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -161,10 +149,6 @@ pub struct ProcessDetail {
     pub depends_on: Option<Vec<String>>,
 }
 
-// ---------------------------------------------------------------------------
-// Error
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
     #[error("failed to serialize/deserialize JSON: {0}")]
@@ -174,10 +158,6 @@ pub enum ProtocolError {
     #[error("malformed message: {0}")]
     Malformed(String),
 }
-
-// ---------------------------------------------------------------------------
-// Encode / decode helpers
-// ---------------------------------------------------------------------------
 
 pub fn encode_request(req: &Request) -> Result<Vec<u8>, ProtocolError> {
     let mut buf = serde_json::to_vec(req)?;
@@ -201,10 +181,6 @@ pub fn decode_response(line: &str) -> Result<Response, ProtocolError> {
     Ok(serde_json::from_str(trimmed)?)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,10 +198,6 @@ mod tests {
         let line = std::str::from_utf8(&bytes).unwrap();
         decode_response(line).unwrap()
     }
-
-    // -----------------------------------------------------------------------
-    // Request roundtrips (12)
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_request_start_roundtrip() {
@@ -343,10 +315,6 @@ mod tests {
         assert_eq!(roundtrip_request(&req), req);
     }
 
-    // -----------------------------------------------------------------------
-    // Response roundtrips (5)
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_response_success_roundtrip() {
         let resp = Response::Success {
@@ -435,10 +403,6 @@ mod tests {
         assert_eq!(roundtrip_response(&resp_no_name), resp_no_name);
     }
 
-    // -----------------------------------------------------------------------
-    // Malformed JSON (3)
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_decode_invalid_json() {
         let result = decode_request("not json at all");
@@ -458,10 +422,6 @@ mod tests {
         let result = decode_request(r#"{"type":"info"}"#);
         assert!(result.is_err());
     }
-
-    // -----------------------------------------------------------------------
-    // Encode/decode helpers (2)
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_encode_appends_newline() {

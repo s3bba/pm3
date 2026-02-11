@@ -7,17 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, watch};
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 pub const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
-
-// ---------------------------------------------------------------------------
-// Watch path resolution
-// ---------------------------------------------------------------------------
-
 pub fn resolve_watch_path(config: &ProcessConfig) -> Option<PathBuf> {
     match config.watch.as_ref()? {
         Watch::Enabled(false) => None,
@@ -35,11 +25,6 @@ pub fn resolve_watch_path(config: &ProcessConfig) -> Option<PathBuf> {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Watch ignore matching
-// ---------------------------------------------------------------------------
-
 fn should_ignore(path: &std::path::Path, ignore_patterns: &[String]) -> bool {
     let path_str = path.to_string_lossy();
     for pattern in ignore_patterns {
@@ -58,11 +43,6 @@ fn should_ignore(path: &std::path::Path, ignore_patterns: &[String]) -> bool {
     }
     false
 }
-
-// ---------------------------------------------------------------------------
-// Watcher task
-// ---------------------------------------------------------------------------
-
 pub fn spawn_watcher(
     name: String,
     config: ProcessConfig,
@@ -227,11 +207,6 @@ pub fn spawn_watcher(
         }
     });
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;

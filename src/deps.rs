@@ -1,10 +1,6 @@
 use crate::config::ProcessConfig;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-// ---------------------------------------------------------------------------
-// Error
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum DepsError {
     #[error("circular dependency detected: {}", cycle.join(" -> "))]
@@ -12,10 +8,6 @@ pub enum DepsError {
     #[error("process '{from}' depends on unknown process '{to}'")]
     Missing { from: String, to: String },
 }
-
-// ---------------------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------------------
 
 /// Check that every name in `depends_on` lists actually exists as a config key.
 pub fn validate_deps(configs: &HashMap<String, ProcessConfig>) -> Result<(), DepsError> {
@@ -33,10 +25,6 @@ pub fn validate_deps(configs: &HashMap<String, ProcessConfig>) -> Result<(), Dep
     }
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Topological sort (Kahn's algorithm)
-// ---------------------------------------------------------------------------
 
 /// Returns processes grouped by level: level 0 has no dependencies,
 /// level 1 depends only on level 0, etc. Detects circular dependencies.
@@ -161,10 +149,6 @@ fn find_cycle(configs: &HashMap<String, ProcessConfig>) -> Vec<String> {
     vec!["unknown cycle".to_string()]
 }
 
-// ---------------------------------------------------------------------------
-// Reverse stop order
-// ---------------------------------------------------------------------------
-
 /// Flat reverse of topological levels: dependents come before their dependencies.
 pub fn reverse_stop_order(
     configs: &HashMap<String, ProcessConfig>,
@@ -174,10 +158,6 @@ pub fn reverse_stop_order(
     order.reverse();
     Ok(order)
 }
-
-// ---------------------------------------------------------------------------
-// Expand helpers
-// ---------------------------------------------------------------------------
 
 /// Given a set of requested names, expand to include all transitive dependencies.
 /// Returns names in topological order (dependencies first).
@@ -277,10 +257,6 @@ pub fn expand_dependents(
     Ok(order)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,10 +287,6 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // validate_deps
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_validate_missing_dep() {
         let mut configs = HashMap::new();
@@ -336,10 +308,6 @@ mod tests {
         configs.insert("web".to_string(), cfg(Some(vec!["db"])));
         assert!(validate_deps(&configs).is_ok());
     }
-
-    // -----------------------------------------------------------------------
-    // topological_levels
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_topo_no_deps() {
@@ -386,10 +354,6 @@ mod tests {
         assert_eq!(levels[1], vec!["web"]);
     }
 
-    // -----------------------------------------------------------------------
-    // Circular dependency detection
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_circular_two_nodes() {
         let mut configs = HashMap::new();
@@ -417,10 +381,6 @@ mod tests {
         assert!(matches!(err, DepsError::Circular { .. }));
     }
 
-    // -----------------------------------------------------------------------
-    // reverse_stop_order
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_reverse_order() {
         let mut configs = HashMap::new();
@@ -429,10 +389,6 @@ mod tests {
         let order = reverse_stop_order(&configs).unwrap();
         assert_eq!(order, vec!["web", "db"]);
     }
-
-    // -----------------------------------------------------------------------
-    // expand_deps
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_expand_deps() {
@@ -449,10 +405,6 @@ mod tests {
         assert!(db_idx < web_idx);
         assert!(cache_idx < web_idx);
     }
-
-    // -----------------------------------------------------------------------
-    // expand_dependents
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_expand_dependents() {

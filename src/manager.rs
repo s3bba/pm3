@@ -1135,10 +1135,6 @@ impl SpawnedProcess {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn resolve_config_names(
     requested: &[String],
     configs: &HashMap<String, ProcessConfig>,

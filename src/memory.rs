@@ -5,18 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, watch};
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 pub const MEMORY_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 pub const STATS_POLL_INTERVAL: Duration = Duration::from_secs(2);
-
-// ---------------------------------------------------------------------------
-// Parsing
-// ---------------------------------------------------------------------------
-
 pub fn parse_memory_string(s: &str) -> Result<u64, ProcessError> {
     let s = s.trim();
     if s.is_empty() {
@@ -55,11 +45,6 @@ pub fn parse_memory_string(s: &str) -> Result<u64, ProcessError> {
 
     Ok((value * multiplier as f64) as u64)
 }
-
-// ---------------------------------------------------------------------------
-// RSS reading
-// ---------------------------------------------------------------------------
-
 #[cfg(unix)]
 pub async fn read_rss_bytes(pid: u32) -> Option<u64> {
     let output = tokio::process::Command::new("ps")
@@ -81,11 +66,6 @@ pub async fn read_rss_bytes(pid: u32) -> Option<u64> {
 pub async fn read_rss_bytes(_pid: u32) -> Option<u64> {
     None
 }
-
-// ---------------------------------------------------------------------------
-// Process stats (CPU + memory)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Default)]
 pub struct ProcessStats {
     pub cpu_percent: Option<f64>,
@@ -168,11 +148,6 @@ pub fn spawn_stats_collector(
         }
     });
 }
-
-// ---------------------------------------------------------------------------
-// Memory monitor task
-// ---------------------------------------------------------------------------
-
 pub fn spawn_memory_monitor(
     name: String,
     max_memory_str: String,
@@ -311,11 +286,6 @@ pub fn spawn_memory_monitor(
         }
     });
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
