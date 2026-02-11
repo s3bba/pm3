@@ -1069,7 +1069,9 @@ impl Manager {
 
         loop {
             let mut any_received = false;
-            for (target, rx) in &mut receivers {
+            let mut closed_targets = Vec::new();
+
+            for (i, (target, rx)) in receivers.iter_mut().enumerate() {
                 match rx.try_recv() {
                     Ok(entry) => {
                         let resp = Response::LogLine {
@@ -1095,7 +1097,18 @@ impl Manager {
                         any_received = true;
                     }
                     Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
-                        return Ok(());
+                        closed_targets.push(i);
+                    }
+                }
+            }
+
+            // Resubscribe to processes whose broadcasters were closed (process restarted)
+            if !closed_targets.is_empty() {
+                let table = self.processes.read().await;
+                for &i in &closed_targets {
+                    let target = &receivers[i].0;
+                    if let Some(managed) = table.get(target) {
+                        receivers[i].1 = managed.log_broadcaster.subscribe();
                     }
                 }
             }
