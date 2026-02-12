@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronDown, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { Check, ChevronDown, Copy, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { codeToHtml } from "shiki";
 
 interface Process {
   name: string;
@@ -244,11 +245,84 @@ const inputClass =
 const selectClass =
   "w-full px-3 py-2  border border-fd-border bg-fd-card text-fd-foreground text-sm focus:outline-none focus:ring-2 focus:ring-fd-primary/50 focus:border-fd-primary";
 
+function TomlPreview({ code }: { code: string }) {
+  const [html, setHtml] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!code) {
+      setHtml("");
+      return;
+    }
+    let cancelled = false;
+    codeToHtml(code, {
+      lang: "toml",
+      themes: { light: "github-light", dark: "github-dark" },
+    }).then((result) => {
+      if (!cancelled) setHtml(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  if (!code) {
+    return (
+      <div className="border border-fd-border bg-fd-card overflow-hidden">
+        <pre className="p-4 font-mono text-sm text-fd-muted-foreground min-h-[200px]">
+          Fill in the form to generate your pm3.toml
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-fd-border bg-fd-card overflow-hidden relative">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-fd-border">
+        <span className="text-xs font-mono text-fd-muted-foreground">
+          pm3.toml
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium transition-colors bg-fd-primary text-fd-primary-foreground hover:opacity-90"
+        >
+          {copied ? (
+            <>
+              <Check className="w-3 h-3" /> Copied!
+            </>
+          ) : (
+            <>
+              <Copy className="w-3 h-3" /> Copy
+            </>
+          )}
+        </button>
+      </div>
+      <div
+        className="text-sm overflow-x-auto min-h-[200px]"
+        dangerouslySetInnerHTML={{
+          __html: html
+            .replace(/class="[^"]*"/, "")
+            .replace(
+              /style="([^"]*)"/,
+              'style="$1;background:transparent;padding:1rem;margin:0"',
+            ),
+        }}
+      />
+    </div>
+  );
+}
+
 export function ConfigBuilder() {
   const [processes, setProcesses] = useState<Process[]>([defaultProcess()]);
   const [activeTab, setActiveTab] = useState(0);
-  const [copied, setCopied] = useState(false);
-
   const proc = processes[activeTab] ?? defaultProcess();
   const toml = generateToml(processes);
 
@@ -297,16 +371,6 @@ export function ConfigBuilder() {
     updateProcess(activeTab, { env });
   }
 
-  async function copyToClipboard() {
-    try {
-      await navigator.clipboard.writeText(toml);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // fallback: noop
-    }
-  }
-
   return (
     <div className="min-h-screen">
       <div className="max-w-7xl mx-auto px-4 py-8">
@@ -319,54 +383,54 @@ export function ConfigBuilder() {
           </p>
         </div>
 
+        {/* Process tabs */}
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          {processes.map((p, i) => (
+            <div
+              key={`${p.name}-${i}`}
+              className={`flex items-center  text-sm font-mono transition-colors ${
+                i === activeTab
+                  ? "bg-fd-primary text-fd-primary-foreground"
+                  : "bg-fd-card border border-fd-border text-fd-foreground hover:bg-fd-accent/50"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveTab(i)}
+                className="px-3 py-1.5"
+              >
+                {p.name || "unnamed"}
+              </button>
+              {processes.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeProcess(i);
+                  }}
+                  className={`pr-2 py-1.5 opacity-60 hover:opacity-100 transition-opacity ${
+                    i === activeTab
+                      ? "text-fd-primary-foreground"
+                      : "text-fd-muted-foreground"
+                  }`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addProcess}
+            className="px-3 py-1.5  text-sm border border-dashed border-fd-border text-fd-muted-foreground hover:text-fd-foreground hover:border-fd-foreground transition-colors"
+          >
+            + Add Process
+          </button>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left: Form */}
           <div className="space-y-4">
-            {/* Process tabs */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {processes.map((p, i) => (
-                <div
-                  key={`${p.name}-${i}`}
-                  className={`flex items-center  text-sm font-mono transition-colors ${
-                    i === activeTab
-                      ? "bg-fd-primary text-fd-primary-foreground"
-                      : "bg-fd-card border border-fd-border text-fd-foreground hover:bg-fd-accent/50"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab(i)}
-                    className="px-3 py-1.5"
-                  >
-                    {p.name || "unnamed"}
-                  </button>
-                  {processes.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeProcess(i);
-                      }}
-                      className={`pr-2 py-1.5 opacity-60 hover:opacity-100 transition-opacity ${
-                        i === activeTab
-                          ? "text-fd-primary-foreground"
-                          : "text-fd-muted-foreground"
-                      }`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={addProcess}
-                className="px-3 py-1.5  text-sm border border-dashed border-fd-border text-fd-muted-foreground hover:text-fd-foreground hover:border-fd-foreground transition-colors"
-              >
-                + Add Process
-              </button>
-            </div>
-
             {/* Basic */}
             <Section title="Basic" defaultOpen>
               <Field
@@ -788,27 +852,7 @@ export function ConfigBuilder() {
 
           {/* Right: TOML Preview */}
           <div className="lg:self-start lg:sticky lg:top-20">
-            <div className=" border border-fd-border bg-fd-card overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-fd-border">
-                <span className="text-xs font-mono text-fd-muted-foreground">
-                  pm3.toml
-                </span>
-                <button
-                  type="button"
-                  onClick={copyToClipboard}
-                  className="px-3 py-1 text-xs font-medium transition-colors bg-fd-primary text-fd-primary-foreground hover:opacity-90"
-                >
-                  {copied ? "Copied!" : "Copy to Clipboard"}
-                </button>
-              </div>
-              <pre className="p-4 font-mono text-sm text-fd-foreground overflow-x-auto min-h-[200px] whitespace-pre">
-                {toml || (
-                  <span className="text-fd-muted-foreground">
-                    Fill in the form to generate your pm3.toml
-                  </span>
-                )}
-              </pre>
-            </div>
+            <TomlPreview code={toml} />
           </div>
         </div>
       </div>

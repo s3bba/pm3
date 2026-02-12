@@ -12,6 +12,13 @@ export default async function RootElement({
       <head>
         <link rel="icon" href="/logo.svg" type="image/svg+xml" />
         <link rel="icon" href="/favicon.ico" sizes="48x48" />
+        <link
+          rel="icon"
+          type="image/png"
+          sizes="32x32"
+          href="/favicon-32x32.png"
+        />
+        <link rel="apple-touch-icon" href="/favicon-32x32.png" />
       </head>
       <body data-version="1.0">
         <Provider>{children}</Provider>
