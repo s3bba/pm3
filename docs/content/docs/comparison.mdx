@@ -16,6 +16,11 @@ pm3 occupies a specific niche: a **developer-focused, single-binary process mana
 | **Config format** | TOML | JSON/YAML/JS |
 | **Language focus** | Language-agnostic | Node.js-centric |
 | **Health checks** | HTTP, HTTPS, TCP | Custom module |
+| **Zero-downtime reload** | Built-in (blue-green) | Requires cluster mode |
+| **Process dependencies** | Built-in (`depends_on`) | Not supported |
+| **Lifecycle hooks** | Pre-start, post-stop | Not built-in |
+| **Cron restarts** | Built-in | Custom module |
+| **Log rotation** | Built-in | Requires pm2-logrotate |
 | **File watching** | Built-in | Built-in |
 | **Memory limits** | Built-in | Built-in |
 | **Cluster mode** | Not supported | Built-in (Node.js) |
