@@ -14,6 +14,32 @@ A process manager. Define processes in `pm3.toml`, manage them with simple comma
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/frectonz/pm3/releases/latest/download/pm3-installer.sh | sh
 ```
 
+### Nix Flakes (Linux)
+
+Install from GitHub:
+
+```sh
+nix profile install github:frectonz/pm3#pm3
+```
+
+Run without installing:
+
+```sh
+nix run github:frectonz/pm3#pm3 -- --help
+```
+
+Install from a local checkout:
+
+```sh
+nix profile install .#pm3
+```
+
+Notes:
+
+- Flake package outputs are currently Linux-only.
+- `pm3 startup` relies on `systemctl --user` on Linux.
+- Lifecycle hooks execute using `sh`.
+
 ### Windows
 
 ```powershell

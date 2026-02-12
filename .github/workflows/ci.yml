@@ -20,6 +20,9 @@ jobs:
       - name: Run Flake Check
         run: nix flake check
 
+      - name: Build Nix Package
+        run: nix build .#pm3
+
       - name: Check Rust Formatting
         run: nix develop -c cargo fmt --check
 
