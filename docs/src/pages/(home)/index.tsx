@@ -67,12 +67,18 @@ export default function Home() {
           </pre>
         </div>
 
-        <div className="flex gap-4">
+        <div className="flex gap-4 flex-wrap justify-center">
           <Link
             to="/docs/quick-start"
             className="px-6 py-3 rounded-lg bg-fd-primary text-fd-primary-foreground font-medium text-sm"
           >
             Get Started
+          </Link>
+          <Link
+            to="/config-builder"
+            className="px-6 py-3 rounded-lg border border-fd-border text-fd-foreground font-medium text-sm hover:bg-fd-accent transition-colors"
+          >
+            Config Builder
           </Link>
           <a
             href="https://github.com/frectonz/pm3"
