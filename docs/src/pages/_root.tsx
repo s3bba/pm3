@@ -9,7 +9,10 @@ export default async function RootElement({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head></head>
+      <head>
+        <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+        <link rel="icon" href="/favicon.ico" sizes="48x48" />
+      </head>
       <body data-version="1.0">
         <Provider>{children}</Provider>
       </body>

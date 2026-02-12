@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <!-- Terminal window background -->
+  <rect x="4" y="4" width="120" height="120" rx="16" fill="#0a0a0a" stroke="#2a2a2a" stroke-width="2"/>
+
+  <!-- Prompt caret -->
+  <text x="18" y="62" font-family="monospace" font-weight="bold" font-size="36" fill="#666">$</text>
+
+  <!-- pm3 text -->
+  <text x="46" y="62" font-family="monospace" font-weight="bold" font-size="36" fill="#e0e0e0">pm3</text>
+
+  <!-- Three process status dots -->
+  <circle cx="38" cy="88" r="6" fill="#28c840"/>
+  <circle cx="64" cy="88" r="6" fill="#28c840"/>
+  <circle cx="90" cy="88" r="6" fill="#28c840"/>
+</svg>

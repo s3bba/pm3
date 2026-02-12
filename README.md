@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/public/logo.svg" width="128" /></p>
+
 # pm3
 
 A process manager. Define processes in `pm3.toml`, manage them with simple commands.
