@@ -16,21 +16,7 @@ The TUI has two views: **Process List** and **Log Viewer**.
 
 ### Process List
 
-The main view shows a table of all processes with real-time status updates:
-
-```
- PM3  ─ daemon: ● connected ─ processes: 3 ─ refresh 1s
- ●online: 2   ●starting: 0   ●unhealthy: 0   ●stopped: 1   ●errored: 0   total: 3
-┌────────┬───────┬──────────┬────────┬──────────┬──────┬────────┐
-│ NAME   │ PID   │ STATUS   │ UPTIME │ RESTARTS │ CPU  │ MEM    │
-├────────┼───────┼──────────┼────────┼──────────┼──────┼────────┤
-│ web    │ 42150 │ ● online │ 2m 13s │ 0        │ 1.2% │ 45.2M  │
-│ api    │ 42153 │ ● online │ 2m 10s │ 0        │ 0.8% │ 32.1M  │
-│ worker │ -     │ stopped  │ -      │ 3        │ -    │ -      │
-└────────┴───────┴──────────┴────────┴──────────┴──────┴────────┘
-```
-
-The header shows connection status and process counts by state.
+The main view shows a table of all processes with real-time status updates. The header shows connection status and process counts by state.
 
 ### Log Viewer
 
