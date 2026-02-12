@@ -48,6 +48,7 @@ pm3 unstartup                    # remove system service
 pm3 tui                          # open interactive terminal UI
 pm3 init                         # interactive pm3.toml creation wizard
 pm3 kill                         # stop everything and shut down the daemon
+pm3 --version                    # show version information
 ```
 
 Add `--json` to any command for JSON output.
@@ -67,8 +68,8 @@ env_file = ".env"                   # or [".env", ".env.local"]
 
 # Restart behavior
 restart = "on_failure"              # "on_failure", "always", or "never"
-max_restarts = 10                   # max restart attempts before giving up
-min_uptime = 1000                   # ms — resets restart counter if process stays up this long
+max_restarts = 10                   # max restart attempts before giving up (default: 15)
+min_uptime = 1000                   # ms — resets restart counter if process stays up this long (default: 1000)
 stop_exit_codes = [0, 143]          # exit codes that should NOT trigger a restart
 
 # Health checks
@@ -79,7 +80,7 @@ kill_signal = "SIGTERM"             # signal sent on stop
 kill_timeout = 5000                 # ms before SIGKILL after kill_signal
 
 # Resource limits
-max_memory = "512M"                 # restart when memory exceeds this
+max_memory = "512M"                 # restart when memory exceeds this (supports K/KB, M/MB, G/GB)
 
 # File watching
 watch = true                        # or a path like "./src"
