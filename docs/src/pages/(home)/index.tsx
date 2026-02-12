@@ -46,12 +46,12 @@ const exampleOutput = `┌────────┬───────┬─
 export default function Home() {
   return (
     <div className="flex flex-col min-h-screen">
-      <title>pm3 - A modern process manager for developers</title>
+      <title>pm3 - A modern process manager</title>
       {/* Hero */}
       <section className="flex flex-col items-center justify-center px-4 py-24 md:py-32 text-center">
         <h1 className="font-mono font-bold text-5xl md:text-7xl mb-4">pm3</h1>
         <p className="font-mono text-fd-muted-foreground text-lg md:text-xl mb-8 max-w-lg">
-          A modern process manager for developers.
+          A modern process manager.
         </p>
 
         <InstallCommand />
@@ -130,7 +130,7 @@ export default function Home() {
           <div>
             <span className="font-mono font-bold text-fd-foreground">pm3</span>
             <p className="text-sm text-fd-muted-foreground mt-1">
-              A modern process manager for developers.
+              A modern process manager.
             </p>
           </div>
           <div className="flex gap-12">
