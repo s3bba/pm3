@@ -795,6 +795,7 @@ impl App {
                 configs,
                 names: None,
                 env: None,
+                wait: false,
             },
         ) {
             Ok(Response::Success { .. }) => {
@@ -1062,6 +1063,7 @@ impl App {
                 configs,
                 names: Some(vec![name.to_string()]),
                 env: None,
+                wait: false,
             },
         ) {
             Ok(Response::Success { .. }) => {

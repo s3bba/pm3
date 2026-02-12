@@ -20,6 +20,8 @@ pub enum Command {
         names: Vec<String>,
         #[arg(long)]
         env: Option<String>,
+        #[arg(short, long)]
+        wait: bool,
     },
     /// Stop running processes
     Stop { names: Vec<String> },
@@ -76,9 +78,10 @@ mod tests {
     fn test_start_no_args() {
         let cli = Cli::try_parse_from(["pm3", "start"]).unwrap();
         match cli.command.unwrap() {
-            Command::Start { names, env } => {
+            Command::Start { names, env, wait } => {
                 assert!(names.is_empty());
                 assert!(env.is_none());
+                assert!(!wait);
             }
             _ => panic!("expected Start"),
         }
@@ -162,9 +165,10 @@ mod tests {
     fn test_start_with_env() {
         let cli = Cli::try_parse_from(["pm3", "start", "--env", "production"]).unwrap();
         match cli.command.unwrap() {
-            Command::Start { names, env } => {
+            Command::Start { names, env, wait } => {
                 assert!(names.is_empty());
                 assert_eq!(env.as_deref(), Some("production"));
+                assert!(!wait);
             }
             _ => panic!("expected Start"),
         }
@@ -174,9 +178,34 @@ mod tests {
     fn test_start_with_name_and_env() {
         let cli = Cli::try_parse_from(["pm3", "start", "web", "--env", "staging"]).unwrap();
         match cli.command.unwrap() {
-            Command::Start { names, env } => {
+            Command::Start { names, env, wait } => {
                 assert_eq!(names, vec!["web"]);
                 assert_eq!(env.as_deref(), Some("staging"));
+                assert!(!wait);
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn test_start_with_wait() {
+        let cli = Cli::try_parse_from(["pm3", "start", "--wait"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Start { names, env, wait } => {
+                assert!(names.is_empty());
+                assert!(env.is_none());
+                assert!(wait);
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn test_start_with_short_wait() {
+        let cli = Cli::try_parse_from(["pm3", "start", "-w"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Start { wait, .. } => {
+                assert!(wait);
             }
             _ => panic!("expected Start"),
         }

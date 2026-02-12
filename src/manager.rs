@@ -76,7 +76,8 @@ impl Manager {
                 configs,
                 names,
                 env,
-            } => self.start(configs, names, env).await,
+                wait,
+            } => self.start(configs, names, env, wait).await,
             Request::List => self.list().await,
             Request::Stop { names } => self.stop(names).await,
             Request::Restart { names } => self.restart(names).await,
@@ -110,6 +111,7 @@ impl Manager {
         configs: HashMap<String, ProcessConfig>,
         names: Option<Vec<String>>,
         env: Option<String>,
+        wait: bool,
     ) -> Response {
         let mut to_start: Vec<(String, ProcessConfig)> = match names {
             Some(ref requested) => {
@@ -215,7 +217,8 @@ impl Manager {
             started.extend(level_names.clone());
 
             let is_last_level = level_idx == levels.len() - 1;
-            if !is_last_level
+            let should_wait = !is_last_level || wait;
+            if should_wait
                 && !level_names.is_empty()
                 && let Err(msg) = wait_for_online(&level_names, &self.processes).await
             {

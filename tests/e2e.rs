@@ -1632,6 +1632,41 @@ cwd = "{}"
 }
 
 // ---------------------------------------------------------------------------
+// --wait flag
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_e2e_start_wait_returns_after_online() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[web]
+command = "sleep 999"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir)
+        .args(["start", "--wait"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("started: web"));
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let web = processes
+        .iter()
+        .find(|p| p.name == "web")
+        .expect("web should appear in list");
+    assert_eq!(web.status, ProcessStatus::Online, "web should be online");
+
+    kill_daemon(&data_dir, work_dir);
+}
+
+// ---------------------------------------------------------------------------
 // Immediate exit detection
 // ---------------------------------------------------------------------------
 

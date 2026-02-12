@@ -75,7 +75,7 @@ fn should_auto_list(request: &Request) -> bool {
 
 fn command_to_request(command: Command) -> color_eyre::Result<Request> {
     match command {
-        Command::Start { names, env } => {
+        Command::Start { names, env, wait } => {
             let config_path = std::env::current_dir()?.join("pm3.toml");
             let configs = pm3::config::load_config(&config_path)
                 .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
@@ -83,6 +83,7 @@ fn command_to_request(command: Command) -> color_eyre::Result<Request> {
                 configs,
                 names: Command::optional_names(names),
                 env,
+                wait,
             })
         }
         Command::Stop { names } => Ok(Request::Stop {

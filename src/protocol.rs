@@ -15,6 +15,8 @@ pub enum Request {
         names: Option<Vec<String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         env: Option<String>,
+        #[serde(default)]
+        wait: bool,
     },
     Stop {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -229,11 +231,20 @@ mod tests {
             },
         );
         let req = Request::Start {
-            configs,
+            configs: configs.clone(),
             names: Some(vec!["web".to_string()]),
             env: Some("production".to_string()),
+            wait: false,
         };
         assert_eq!(roundtrip_request(&req), req);
+
+        let req_wait = Request::Start {
+            configs,
+            names: None,
+            env: None,
+            wait: true,
+        };
+        assert_eq!(roundtrip_request(&req_wait), req_wait);
     }
 
     #[test]
