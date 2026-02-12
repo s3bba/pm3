@@ -158,6 +158,45 @@ fn handle_log_viewer_key(app: &mut App, code: KeyCode, paths: &Paths) -> bool {
     false
 }
 
+fn strip_ansi_escape_codes(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    let mut prev_esc = false;
+                    for c in chars.by_ref() {
+                        if c == '\u{7}' || (prev_esc && c == '\\') {
+                            break;
+                        }
+                        prev_esc = c == '\u{1b}';
+                    }
+                }
+                Some(_) | None => {}
+            }
+        } else if ch == '\u{9b}' {
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+
+    out
+}
+
 fn ui(f: &mut Frame, app: &mut App) {
     let terminal_width = f.area().width;
 
@@ -976,7 +1015,10 @@ impl App {
                 LogSource::Stderr => paths.stderr_log(process_name),
             };
             if let Ok(new_lines) = log::tail_file(&path, 200) {
-                *lines = new_lines;
+                *lines = new_lines
+                    .into_iter()
+                    .map(|line| strip_ansi_escape_codes(&line))
+                    .collect();
             }
             if *auto_scroll {
                 *scroll_offset = 0;
@@ -1126,5 +1168,22 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_ansi_escape_codes;
+
+    #[test]
+    fn strips_csi_color_sequences() {
+        let line = "before \u{1b}[31mred\u{1b}[0m after";
+        assert_eq!(strip_ansi_escape_codes(line), "before red after");
+    }
+
+    #[test]
+    fn preserves_plain_text() {
+        let line = "plain log line";
+        assert_eq!(strip_ansi_escape_codes(line), "plain log line");
     }
 }
