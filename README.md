@@ -4,6 +4,8 @@
 
 A process manager. Define processes in `pm3.toml`, manage them with simple commands.
 
+[![asciicast](https://asciinema.org/a/4Kat5eEd2jJPxTaz.svg)](https://asciinema.org/a/4Kat5eEd2jJPxTaz)
+
 ## Quick Start
 
 Create a `pm3.toml` in your project directory (or run `pm3 init` to generate one interactively):

@@ -1,5 +1,6 @@
 import { ArrowRight, Wrench } from "lucide-react";
 import { Link } from "waku";
+import { AsciinemaPlayer } from "@/components/asciinema-player";
 import { InstallCommand } from "@/components/install-command";
 
 const features = [
@@ -73,6 +74,11 @@ export default function Home() {
             Config Builder
           </Link>
         </div>
+      </section>
+
+      {/* Demo */}
+      <section className="px-4 max-w-4xl mx-auto w-full">
+        <AsciinemaPlayer />
       </section>
 
       {/* Features */}
