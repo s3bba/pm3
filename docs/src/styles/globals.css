@@ -6,6 +6,13 @@
   /* Terminal-inspired green accent */
   --color-fd-primary: oklch(0.55 0.17 155);
   --color-fd-primary-foreground: oklch(0.98 0 0);
+
+  /* No rounded corners */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
 }
 
 .dark {

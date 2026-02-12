@@ -15,19 +15,19 @@ export function InstallCommand() {
   const [tab, setTab] = useState<Tab>("unix");
 
   return (
-    <div className="w-full max-w-4xl mb-8 rounded-lg border border-fd-border bg-fd-card p-4 text-left overflow-hidden">
+    <div className="w-full max-w-4xl mb-8  border border-fd-border bg-fd-card p-4 text-left overflow-hidden">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-full bg-red-500" />
-          <span className="w-3 h-3 rounded-full bg-yellow-500" />
-          <span className="w-3 h-3 rounded-full bg-green-500" />
+          <span className="w-3 h-3  bg-red-500" />
+          <span className="w-3 h-3  bg-yellow-500" />
+          <span className="w-3 h-3  bg-green-500" />
           <div className="flex ml-2 gap-1">
             {(["unix", "windows"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setTab(t)}
-                className={`px-2.5 py-0.5 rounded text-xs font-mono transition-colors ${
+                className={`px-2.5 py-0.5text-xs font-mono transition-colors ${
                   tab === t
                     ? "bg-fd-accent text-fd-foreground"
                     : "text-fd-muted-foreground hover:text-fd-foreground"

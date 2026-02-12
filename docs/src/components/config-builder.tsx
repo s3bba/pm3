@@ -193,11 +193,11 @@ function Section({
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <div className="border border-fd-border rounded-lg">
+    <div className="border border-fd-border ">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-fd-foreground hover:bg-fd-accent/50 transition-colors rounded-lg"
+        className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-fd-foreground hover:bg-fd-accent/50 transition-colors "
       >
         {title}
         <ChevronDown
@@ -239,10 +239,10 @@ function Field({
 }
 
 const inputClass =
-  "w-full px-3 py-2 rounded-lg border border-fd-border bg-fd-card text-fd-foreground text-sm placeholder:text-fd-muted-foreground focus:outline-none focus:ring-2 focus:ring-fd-primary/50 focus:border-fd-primary";
+  "w-full px-3 py-2  border border-fd-border bg-fd-card text-fd-foreground text-sm placeholder:text-fd-muted-foreground focus:outline-none focus:ring-2 focus:ring-fd-primary/50 focus:border-fd-primary";
 
 const selectClass =
-  "w-full px-3 py-2 rounded-lg border border-fd-border bg-fd-card text-fd-foreground text-sm focus:outline-none focus:ring-2 focus:ring-fd-primary/50 focus:border-fd-primary";
+  "w-full px-3 py-2  border border-fd-border bg-fd-card text-fd-foreground text-sm focus:outline-none focus:ring-2 focus:ring-fd-primary/50 focus:border-fd-primary";
 
 export function ConfigBuilder() {
   const [processes, setProcesses] = useState<Process[]>([defaultProcess()]);
@@ -327,7 +327,7 @@ export function ConfigBuilder() {
               {processes.map((p, i) => (
                 <div
                   key={`${p.name}-${i}`}
-                  className={`flex items-center rounded-lg text-sm font-mono transition-colors ${
+                  className={`flex items-center  text-sm font-mono transition-colors ${
                     i === activeTab
                       ? "bg-fd-primary text-fd-primary-foreground"
                       : "bg-fd-card border border-fd-border text-fd-foreground hover:bg-fd-accent/50"
@@ -361,7 +361,7 @@ export function ConfigBuilder() {
               <button
                 type="button"
                 onClick={addProcess}
-                className="px-3 py-1.5 rounded-lg text-sm border border-dashed border-fd-border text-fd-muted-foreground hover:text-fd-foreground hover:border-fd-foreground transition-colors"
+                className="px-3 py-1.5  text-sm border border-dashed border-fd-border text-fd-muted-foreground hover:text-fd-foreground hover:border-fd-foreground transition-colors"
               >
                 + Add Process
               </button>
@@ -788,7 +788,7 @@ export function ConfigBuilder() {
 
           {/* Right: TOML Preview */}
           <div className="lg:self-start lg:sticky lg:top-20">
-            <div className="rounded-lg border border-fd-border bg-fd-card overflow-hidden">
+            <div className=" border border-fd-border bg-fd-card overflow-hidden">
               <div className="flex items-center justify-between px-4 py-2 border-b border-fd-border">
                 <span className="text-xs font-mono text-fd-muted-foreground">
                   pm3.toml
@@ -796,7 +796,7 @@ export function ConfigBuilder() {
                 <button
                   type="button"
                   onClick={copyToClipboard}
-                  className="px-3 py-1 rounded text-xs font-medium transition-colors bg-fd-primary text-fd-primary-foreground hover:opacity-90"
+                  className="px-3 py-1 text-xs font-medium transition-colors bg-fd-primary text-fd-primary-foreground hover:opacity-90"
                 >
                   {copied ? "Copied!" : "Copy to Clipboard"}
                 </button>

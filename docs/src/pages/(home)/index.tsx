@@ -1,3 +1,4 @@
+import { ArrowRight, Wrench } from "lucide-react";
 import { Link } from "waku";
 import { InstallCommand } from "@/components/install-command";
 
@@ -59,24 +60,18 @@ export default function Home() {
         <div className="flex gap-4 flex-wrap justify-center">
           <Link
             to="/docs/quick-start"
-            className="px-6 py-3 rounded-lg bg-fd-primary text-fd-primary-foreground font-medium text-sm"
+            className="flex items-center gap-2 px-6 py-3 bg-fd-primary text-fd-primary-foreground font-medium text-sm"
           >
             Get Started
+            <ArrowRight className="w-4 h-4" />
           </Link>
           <Link
             to="/config-builder"
-            className="px-6 py-3 rounded-lg border border-fd-border text-fd-foreground font-medium text-sm hover:bg-fd-accent transition-colors"
+            className="flex items-center gap-2 px-6 py-3 border border-fd-border text-fd-foreground font-medium text-sm hover:bg-fd-accent transition-colors"
           >
+            <Wrench className="w-4 h-4" />
             Config Builder
           </Link>
-          <a
-            href="https://github.com/frectonz/pm3"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-6 py-3 rounded-lg border border-fd-border text-fd-foreground font-medium text-sm hover:bg-fd-accent transition-colors"
-          >
-            GitHub
-          </a>
         </div>
       </section>
 
@@ -86,7 +81,7 @@ export default function Home() {
           {features.map((feature) => (
             <div
               key={feature.title}
-              className="rounded-lg border border-fd-border bg-fd-card p-6"
+              className=" border border-fd-border bg-fd-card p-6"
             >
               <h3 className="font-semibold text-fd-foreground mb-2">
                 {feature.title}
@@ -105,7 +100,7 @@ export default function Home() {
           Define. Start. Monitor.
         </h2>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="rounded-lg border border-fd-border bg-fd-card overflow-hidden">
+          <div className=" border border-fd-border bg-fd-card overflow-hidden">
             <div className="px-4 py-2 border-b border-fd-border text-xs font-mono text-fd-muted-foreground">
               pm3.toml
             </div>
@@ -113,7 +108,7 @@ export default function Home() {
               {exampleToml}
             </pre>
           </div>
-          <div className="rounded-lg border border-fd-border bg-fd-card overflow-hidden">
+          <div className=" border border-fd-border bg-fd-card overflow-hidden">
             <div className="px-4 py-2 border-b border-fd-border text-xs font-mono text-fd-muted-foreground">
               $ pm3 list
             </div>
