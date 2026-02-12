@@ -1,4 +1,5 @@
 import { Link } from "waku";
+import { InstallCommand } from "@/components/install-command";
 
 const features = [
   {
@@ -42,9 +43,6 @@ const exampleOutput = `┌────────┬───────┬─
 │ worker │ 42156 │ ● online │ 2m 10s │ 1        │
 └────────┴───────┴──────────┴────────┴──────────┘`;
 
-const installCommand =
-  "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/frectonz/pm3/releases/download/0.1.3/pm3-installer.sh | sh";
-
 export default function Home() {
   return (
     <div className="flex flex-col min-h-screen">
@@ -56,17 +54,7 @@ export default function Home() {
           A modern process manager for developers.
         </p>
 
-        <div className="w-full max-w-2xl mb-8 rounded-lg border border-fd-border bg-fd-card p-4 text-left overflow-x-auto">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="w-3 h-3 rounded-full bg-red-500" />
-            <span className="w-3 h-3 rounded-full bg-yellow-500" />
-            <span className="w-3 h-3 rounded-full bg-green-500" />
-          </div>
-          <pre className="font-mono text-sm text-fd-foreground whitespace-pre-wrap break-all">
-            <span className="text-fd-muted-foreground">$ </span>
-            {installCommand}
-          </pre>
-        </div>
+        <InstallCommand />
 
         <div className="flex gap-4 flex-wrap justify-center">
           <Link
