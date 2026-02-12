@@ -64,6 +64,50 @@ function collectPages(dir: string): Page[] {
   return pages;
 }
 
+function gridLines(width: number, height: number, cellSize: number) {
+  const lines: React.JSX.Element[] = [];
+
+  for (let x = cellSize; x < width; x += cellSize) {
+    const dist = Math.abs(x - width * 0.4) / width;
+    const opacity = Math.max(0, 0.12 - dist * 0.15);
+    if (opacity <= 0) continue;
+    lines.push(
+      <div
+        key={`v${x}`}
+        style={{
+          position: "absolute",
+          left: x,
+          top: 0,
+          width: "1px",
+          height: "100%",
+          backgroundColor: `rgba(40, 200, 64, ${opacity})`,
+        }}
+      />,
+    );
+  }
+
+  for (let y = cellSize; y < height; y += cellSize) {
+    const dist = y / height;
+    const opacity = Math.max(0, 0.12 - dist * 0.14);
+    if (opacity <= 0) continue;
+    lines.push(
+      <div
+        key={`h${y}`}
+        style={{
+          position: "absolute",
+          top: y,
+          left: 0,
+          height: "1px",
+          width: "100%",
+          backgroundColor: `rgba(40, 200, 64, ${opacity})`,
+        }}
+      />,
+    );
+  }
+
+  return lines;
+}
+
 async function generateOGImage(page: Page): Promise<void> {
   const response = new ImageResponse(
     <div
@@ -74,8 +118,20 @@ async function generateOGImage(page: Page): Promise<void> {
         height: "100%",
         backgroundColor: "#0a0a0a",
         fontFamily: "Geist, sans-serif",
+        position: "relative",
       }}
     >
+      {/* Grid pattern overlay */}
+      <div
+        style={{
+          display: "flex",
+          position: "absolute",
+          inset: 0,
+        }}
+      >
+        {gridLines(1200, 630, 48)}
+      </div>
+
       {/* Green accent bar at top */}
       <div
         style={{ display: "flex", height: "4px", backgroundColor: "#28c840" }}

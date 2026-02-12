@@ -21,6 +21,7 @@ export default async function RootElement({
         <link rel="apple-touch-icon" href="/favicon-32x32.png" />
       </head>
       <body data-version="1.0">
+        <div className="grid-bg" />
         <Provider>{children}</Provider>
       </body>
     </html>

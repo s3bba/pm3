@@ -24,6 +24,48 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  isolation: isolate;
+}
+
+/* Animated grid background */
+.grid-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(40, 200, 64, 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(40, 200, 64, 0.35) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image:
+    radial-gradient(
+      ellipse 80% 50% at 50% 0%,
+      rgba(0, 0, 0, 0.7),
+      transparent 70%
+    ),
+    radial-gradient(circle at 85% 70%, rgba(0, 0, 0, 0.3), transparent 35%),
+    radial-gradient(circle at 10% 60%, rgba(0, 0, 0, 0.25), transparent 30%);
+  mask-composite: add;
+  -webkit-mask-composite: source-over;
+  animation: grid-pulse 10s ease-in-out infinite alternate;
+}
+
+.dark .grid-bg {
+  background-image:
+    linear-gradient(rgba(40, 200, 64, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(40, 200, 64, 0.2) 1px, transparent 1px);
+}
+
+@keyframes grid-pulse {
+  0% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.6;
+  }
 }
 
 /* Override rounded-full on search bar and theme toggle */
