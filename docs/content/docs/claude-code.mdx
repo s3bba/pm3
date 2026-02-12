@@ -1,0 +1,70 @@
+---
+title: Claude Code Skill
+description: Use the pm3 skill for Claude Code to generate and manage pm3.toml configs with AI.
+icon: Sparkles
+---
+
+pm3 ships a [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) that teaches Claude how to generate, edit, and troubleshoot `pm3.toml` configuration files for your project.
+
+## Install
+
+Create the skill file in your project:
+
+```bash
+mkdir -p .claude/skills/pm3
+curl -fsSL https://raw.githubusercontent.com/frectonz/pm3/main/.claude/skills/pm3/SKILL.md -o .claude/skills/pm3/SKILL.md
+```
+
+Or install it globally so it's available in every project:
+
+```bash
+mkdir -p ~/.claude/skills/pm3
+curl -fsSL https://raw.githubusercontent.com/frectonz/pm3/main/.claude/skills/pm3/SKILL.md -o ~/.claude/skills/pm3/SKILL.md
+```
+
+## Usage
+
+Once installed, invoke the skill in Claude Code with:
+
+```
+/pm3
+```
+
+Claude will scan your project for existing configuration files (`package.json`, `Cargo.toml`, `docker-compose.yml`, etc.), infer what processes you need, and generate a valid `pm3.toml`.
+
+### Examples
+
+**Generate a config from scratch:**
+
+```
+/pm3 set up pm3 for this project
+```
+
+**Add a new process:**
+
+```
+/pm3 add a redis worker process
+```
+
+**Add health checks:**
+
+```
+/pm3 add health checks to all my http services
+```
+
+**Set up environments:**
+
+```
+/pm3 add production and staging environments
+```
+
+## What the Skill Knows
+
+The skill has the full pm3 configuration schema baked in, including:
+
+- All process options (`command`, `cwd`, `env`, `restart`, `health_check`, etc.)
+- Environment-specific overrides (`[process.env_production]`)
+- Validation rules (required fields, naming constraints)
+- CLI commands for reference
+
+It will always produce valid TOML that conforms to the pm3 config format.
