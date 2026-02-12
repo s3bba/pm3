@@ -23,7 +23,7 @@ pm3 occupies a specific niche: a **developer-focused, single-binary process mana
 | **Log rotation** | Built-in | Requires pm2-logrotate |
 | **File watching** | Built-in | Built-in |
 | **Memory limits** | Built-in | Built-in |
-| **Cluster mode** | Not supported | Built-in (Node.js) |
+| **Cluster mode** | Built-in (language-agnostic) | Built-in (Node.js only) |
 | **Install size** | ~10MB binary | ~50MB+ (Node.js + npm) |
 
 **Choose pm3 if** you want a lightweight, language-agnostic process manager without a Node.js dependency.
@@ -86,5 +86,5 @@ pm3's differentiators:
 - **Single binary** — no runtime dependencies (Node.js, Python, Docker).
 - **TOML config** — expressive but simple, with per-process options.
 - **Built-in TUI** — real-time monitoring without external tools.
-- **Batteries included** — health checks, file watching, memory limits, cron restarts, and environment-specific config all built in.
+- **Batteries included** — health checks, file watching, memory limits, cron restarts, cluster mode, and environment-specific config all built in.
 - **Cross-platform** — macOS, Linux, and Windows from the same binary.

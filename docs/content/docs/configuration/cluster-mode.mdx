@@ -38,13 +38,21 @@ Every instance automatically receives two environment variables:
 | `PM3_INSTANCE_ID` | 0-based index of this instance | `0`, `1`, `2`, ... |
 | `PM3_INSTANCE_COUNT` | Total number of instances | `4` |
 
-Use these in your application to partition work, bind to different ports, etc:
+Use these in your application to partition work, bind to different ports, etc.
+
+### Binding to different ports
+
+If your process listens on a network port, each instance needs a unique one. Use `PM3_INSTANCE_ID` to offset from a base port:
 
 ```python
 import os
 
 instance_id = int(os.environ["PM3_INSTANCE_ID"])
-port = 3000 + instance_id
+port = 3000 + instance_id  # 3000, 3001, 3002, ...
+```
+
+```javascript
+const port = 3000 + Number(process.env.PM3_INSTANCE_ID);
 ```
 
 ## Managing Instances
