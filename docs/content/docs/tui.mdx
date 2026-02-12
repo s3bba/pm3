@@ -19,13 +19,14 @@ The TUI has two views: **Process List** and **Log Viewer**.
 The main view shows a table of all processes with real-time status updates:
 
 ```
- pm3                            ● connected  2 online  1 stopped
+ PM3  ─ daemon: ● connected ─ processes: 3 ─ refresh 1s
+ ●online: 2   ●starting: 0   ●unhealthy: 0   ●stopped: 1   ●errored: 0   total: 3
 ┌────────┬───────┬──────────┬────────┬──────────┬──────┬────────┐
-│ NAME   │ PID   │ STATUS   │ UPTIME │ RESTARTS │ CPU% │ MEM    │
+│ NAME   │ PID   │ STATUS   │ UPTIME │ RESTARTS │ CPU  │ MEM    │
 ├────────┼───────┼──────────┼────────┼──────────┼──────┼────────┤
 │ web    │ 42150 │ ● online │ 2m 13s │ 0        │ 1.2% │ 45.2M  │
 │ api    │ 42153 │ ● online │ 2m 10s │ 0        │ 0.8% │ 32.1M  │
-│ worker │ —     │ stopped  │ —      │ 3        │ —    │ —      │
+│ worker │ -     │ stopped  │ -      │ 3        │ -    │ -      │
 └────────┴───────┴──────────┴────────┴──────────┴──────┴────────┘
 ```
 
@@ -85,7 +86,7 @@ Press `Enter` on a process to open its log viewer. Logs stream in real-time with
 
 The TUI adapts to your terminal width:
 
-- **Wide** (100+ columns): Shows all columns (NAME, PID, STATUS, UPTIME, RESTARTS, CPU%, MEM).
+- **Wide** (100+ columns): Shows all columns (NAME, PID, STATUS, UPTIME, RESTARTS, CPU, MEM).
 - **Medium** (70+ columns): Hides CPU% and MEM columns.
 - **Narrow** (< 70 columns): Shows only NAME, STATUS, and UPTIME.
 

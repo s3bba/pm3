@@ -50,8 +50,13 @@ pm3 start
 pm3 will start a background daemon (if one isn't already running) and launch both processes. You'll see output like:
 
 ```
-[PM3] Process "web" started with PID 42150
-[PM3] Process "worker" started with PID 42151
+started: web, worker
+┌────────┬───────┬───────┬────────┬──────┬──────┬────────┬──────────┐
+│ name   │ group │ pid   │ status │ cpu  │ mem  │ uptime │ restarts │
+├────────┼───────┼───────┼────────┼──────┼──────┼────────┼──────────┤
+│ web    │ -     │ 42150 │ online │ 0.0% │ 5.2M │ 0s     │ 0        │
+│ worker │ -     │ 42151 │ online │ 0.0% │ 3.1M │ 0s     │ 0        │
+└────────┴───────┴───────┴────────┴──────┴──────┴────────┴──────────┘
 ```
 
 ## Check Status
@@ -61,12 +66,12 @@ pm3 list
 ```
 
 ```
-┌────────┬───────┬──────────┬────────┬──────────┐
-│ NAME   │ PID   │ STATUS   │ UPTIME │ RESTARTS │
-├────────┼───────┼──────────┼────────┼──────────┤
-│ web    │ 42150 │ ● online │ 15s    │ 0        │
-│ worker │ 42151 │ ● online │ 15s    │ 0        │
-└────────┴───────┴──────────┴────────┴──────────┘
+┌────────┬───────┬───────┬────────┬──────┬──────┬────────┬──────────┐
+│ name   │ group │ pid   │ status │ cpu  │ mem  │ uptime │ restarts │
+├────────┼───────┼───────┼────────┼──────┼──────┼────────┼──────────┤
+│ web    │ -     │ 42150 │ online │ 1.2% │ 5.2M │ 15s    │ 0        │
+│ worker │ -     │ 42151 │ online │ 0.5% │ 3.1M │ 15s    │ 0        │
+└────────┴───────┴───────┴────────┴──────┴──────┴────────┴──────────┘
 ```
 
 ## View Logs

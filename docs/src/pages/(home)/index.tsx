@@ -36,13 +36,13 @@ command = "node worker.js"
 max_memory = "512M"
 cron_restart = "0 3 * * *"`;
 
-const exampleOutput = `┌────────┬───────┬──────────┬────────┬──────────┐
-│ NAME   │ PID   │ STATUS   │ UPTIME │ RESTARTS │
-├────────┼───────┼──────────┼────────┼──────────┤
-│ web    │ 42150 │ ● online │ 2m 13s │ 0        │
-│ api    │ 42153 │ ● online │ 2m 10s │ 0        │
-│ worker │ 42156 │ ● online │ 2m 10s │ 1        │
-└────────┴───────┴──────────┴────────┴──────────┘`;
+const exampleOutput = `┌────────┬───────┬───────┬────────┬──────┬──────┬────────┬──────────┐
+│ name   │ group │ pid   │ status │ cpu  │ mem  │ uptime │ restarts │
+├────────┼───────┼───────┼────────┼──────┼──────┼────────┼──────────┤
+│ web    │ -     │ 42150 │ online │ 1.2% │ 5.2M │ 2m 13s │ 0        │
+│ api    │ -     │ 42153 │ online │ 0.8% │ 3.1M │ 2m 10s │ 0        │
+│ worker │ -     │ 42156 │ online │ 0.5% │ 2.8M │ 2m 10s │ 1        │
+└────────┴───────┴───────┴────────┴──────┴──────┴────────┴──────────┘`;
 
 export default function Home() {
   return (

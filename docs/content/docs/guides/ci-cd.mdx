@@ -15,15 +15,18 @@ pm3 list --json
 ```
 
 ```json
-[
-  {
-    "name": "api",
-    "pid": 42150,
-    "status": "online",
-    "uptime": 130,
-    "restarts": 0
-  }
-]
+{
+  "type": "process_list",
+  "processes": [
+    {
+      "name": "api",
+      "pid": 42150,
+      "status": "online",
+      "uptime": 130,
+      "restarts": 0
+    }
+  ]
+}
 ```
 
 ```bash
@@ -56,7 +59,7 @@ pm3 start
 
 # Poll until all processes are online
 for i in $(seq 1 30); do
-  ALL_ONLINE=$(pm3 list --json | jq 'all(.status == "online")')
+  ALL_ONLINE=$(pm3 list --json | jq '.processes | all(.status == "online")')
   if [ "$ALL_ONLINE" = "true" ]; then
     echo "All processes online"
     exit 0
@@ -94,7 +97,7 @@ exit 1
 ### Check if a specific process is online
 
 ```bash
-STATUS=$(pm3 info api --json | jq -r '.status')
+STATUS=$(pm3 info api --json | jq -r '.info.status')
 if [ "$STATUS" = "online" ]; then
   echo "API is ready"
 fi
@@ -103,20 +106,20 @@ fi
 ### Get process PID
 
 ```bash
-PID=$(pm3 info api --json | jq -r '.pid')
+PID=$(pm3 info api --json | jq -r '.info.pid')
 ```
 
 ### Count running processes
 
 ```bash
-ONLINE=$(pm3 list --json | jq '[.[] | select(.status == "online")] | length')
+ONLINE=$(pm3 list --json | jq '[.processes[] | select(.status == "online")] | length')
 echo "$ONLINE processes online"
 ```
 
 ### Fail if any process errored
 
 ```bash
-ERRORED=$(pm3 list --json | jq '[.[] | select(.status == "errored")] | length')
+ERRORED=$(pm3 list --json | jq '[.processes[] | select(.status == "errored")] | length')
 if [ "$ERRORED" -gt 0 ]; then
   echo "Some processes have errors"
   pm3 list
