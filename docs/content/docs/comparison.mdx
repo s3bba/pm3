@@ -23,7 +23,7 @@ pm3 occupies a specific niche: a **developer-focused, single-binary process mana
 | **Log rotation** | Built-in | Requires pm2-logrotate |
 | **File watching** | Built-in | Built-in |
 | **Memory limits** | Built-in | Built-in |
-| **Cluster mode** | Built-in (language-agnostic) | Built-in (Node.js only) |
+| **Cluster mode** | Built-in (multi-instance, no port sharing) | Built-in (shared-port via Node.js `cluster` module) |
 | **Install size** | ~10MB binary | ~50MB+ (Node.js + npm) |
 
 **Choose pm3 if** you want a lightweight, language-agnostic process manager without a Node.js dependency.
