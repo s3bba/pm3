@@ -25,3 +25,16 @@ body {
   flex-direction: column;
   min-height: 100vh;
 }
+
+/* Override rounded-full on search bar and theme toggle */
+[data-search-full] {
+  border-radius: 0 !important;
+}
+
+[data-theme-toggle] {
+  border-radius: 0 !important;
+}
+
+[data-theme-toggle] > * {
+  border-radius: 0 !important;
+}
