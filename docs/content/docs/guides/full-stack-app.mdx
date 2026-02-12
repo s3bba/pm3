@@ -1,0 +1,116 @@
+---
+title: Full-Stack App
+description: Manage a full-stack application with pm3 — frontend, API, and database.
+icon: AppWindow
+---
+
+This guide walks through a typical full-stack setup with a React frontend, Express API, and PostgreSQL database managed by pm3.
+
+## The Config
+
+```toml title="pm3.toml"
+[database]
+command = "docker start -a postgres-dev"
+health_check = "tcp://localhost:5432"
+group = "infra"
+
+[api]
+command = "node server.js"
+cwd = "./api"
+env = { PORT = "8080", DATABASE_URL = "postgres://localhost:5432/myapp" }
+env_file = ".env"
+health_check = "http://localhost:8080/health"
+depends_on = ["database"]
+watch = "./src"
+watch_ignore = ["node_modules", ".git"]
+group = "backend"
+
+[web]
+command = "npm run dev"
+cwd = "./frontend"
+env = { PORT = "3000", API_URL = "http://localhost:8080" }
+depends_on = ["api"]
+watch = "./src"
+watch_ignore = ["node_modules", ".git"]
+group = "frontend"
+```
+
+## What This Does
+
+### Startup Order with `depends_on`
+
+When you run `pm3 start`, processes start in dependency order:
+
+1. **database** starts first.
+2. **api** starts after `database` is running.
+3. **web** starts after `api` is running.
+
+### Health Check Gating
+
+The `database` process has a TCP health check. pm3 verifies it can connect to port 5432 before considering the database "online." The `api` process has an HTTP health check — pm3 waits for a `2xx` response from `/health`.
+
+This means your API won't start hitting a database that isn't ready yet, and your frontend won't try to connect to an API that hasn't finished booting.
+
+### File Watching for Development
+
+Both `api` and `web` have file watching enabled on their `./src` directories. When you save a file, the process automatically restarts — no need for a separate file watcher tool.
+
+### Shared Environment
+
+The API uses `env_file = ".env"` to load shared secrets (API keys, database credentials) from a dotenv file. Inline `env` provides config that's safe to check into version control.
+
+## Running It
+
+```bash
+# Start everything
+pm3 start
+
+# Check status
+pm3 list
+
+# Watch API logs
+pm3 log api -f
+
+# Open the TUI for real-time monitoring
+pm3 tui
+```
+
+## Using Groups
+
+Groups let you operate on subsets of processes:
+
+```bash
+# Restart just the backend
+pm3 restart api
+
+# Stop infrastructure
+pm3 stop database
+```
+
+## Adding Production Config
+
+```toml title="pm3.toml"
+[api.env_production]
+DATABASE_URL = "postgres://prod-host:5432/myapp"
+NODE_ENV = "production"
+
+[web.env_production]
+API_URL = "https://api.example.com"
+```
+
+```bash
+pm3 start --env production
+```
+
+## Shutdown
+
+When you stop processes, pm3 shuts them down in reverse dependency order:
+
+1. **web** stops first.
+2. **api** stops after web is down.
+3. **database** stops last.
+
+```bash
+pm3 stop    # Graceful shutdown in order
+pm3 kill    # Stop everything and shut down daemon
+```

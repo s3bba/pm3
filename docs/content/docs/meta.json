@@ -1,0 +1,18 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "---Docs---",
+    "index",
+    "quick-start",
+    "---Reference---",
+    "configuration",
+    "cli",
+    "tui",
+    "logging",
+    "process-lifecycle",
+    "---Guides---",
+    "guides",
+    "---More---",
+    "comparison"
+  ]
+}

@@ -1,0 +1,145 @@
+---
+title: Auto-Restart & Reliability
+description: Configure restart policies, backoff, and safety nets to keep processes running.
+icon: ShieldCheck
+---
+
+pm3 provides several layers of protection to keep your processes running reliably.
+
+## Restart Policies
+
+### `on_failure` (default)
+
+Restarts the process when it exits with a non-zero exit code.
+
+```toml
+[worker]
+command = "node worker.js"
+restart = "on_failure"
+```
+
+This is the best choice for most processes — it restarts on crashes but respects clean exits.
+
+### `always`
+
+Always restarts, regardless of exit code. Use for processes that should never stop.
+
+```toml
+[web]
+command = "node server.js"
+restart = "always"
+```
+
+### `never`
+
+Never restarts. Use for one-shot tasks like migrations.
+
+```toml
+[migrate]
+command = "python manage.py migrate"
+restart = "never"
+```
+
+## Tuning Restarts
+
+### `max_restarts`
+
+Maximum restart attempts before pm3 gives up. Default: **15**.
+
+```toml
+[worker]
+command = "node worker.js"
+max_restarts = 25
+```
+
+### `min_uptime`
+
+How long a process must stay up (in milliseconds) to reset the restart counter. Default: **1000ms**.
+
+```toml
+[worker]
+command = "node worker.js"
+min_uptime = 5000   # Must stay up 5 seconds to reset counter
+```
+
+If your process crashes within `min_uptime`, the restart counter increments. Once the process stays up past this threshold, the counter resets to zero.
+
+### `stop_exit_codes`
+
+Exit codes that should **not** trigger a restart, even with `restart = "on_failure"`.
+
+```toml
+[worker]
+command = "node worker.js"
+stop_exit_codes = [0, 143]   # 0 = clean exit, 143 = SIGTERM
+```
+
+## Exponential Backoff
+
+pm3 doesn't restart immediately — it uses exponential backoff to prevent rapid restart loops:
+
+| Attempt | Delay |
+|---|---|
+| 1 | 100ms |
+| 2 | 200ms |
+| 3 | 400ms |
+| 4 | 800ms |
+| 5 | 1.6s |
+| 6 | 3.2s |
+| 7 | 6.4s |
+| 8 | 12.8s |
+| 9 | 25.6s |
+| 10+ | 30s (cap) |
+
+The formula is `min(100ms × 2^n, 30s)`. This gives fast recovery for transient failures while avoiding hammering a persistently failing process.
+
+## Cron Restarts
+
+For processes that benefit from periodic refreshes (clearing memory, renewing connections):
+
+```toml
+[cache-worker]
+command = "python cache_worker.py"
+cron_restart = "0 3 * * *"    # Daily at 3 AM UTC
+```
+
+See [Cron Restarts](/docs/configuration/cron-restarts) for syntax details.
+
+## Memory Limits
+
+Auto-restart processes that leak memory:
+
+```toml
+[api]
+command = "node server.js"
+max_memory = "512M"
+```
+
+When the process exceeds 512MB RSS, pm3 performs a graceful restart. See [Memory Limits](/docs/configuration/memory-limits) for details.
+
+## Putting It All Together
+
+A resilient worker configuration:
+
+```toml title="pm3.toml"
+[worker]
+command = "node worker.js"
+restart = "always"
+max_restarts = 50
+min_uptime = 10000
+stop_exit_codes = [0]
+max_memory = "256M"
+cron_restart = "0 */6 * * *"
+health_check = "http://localhost:9090/health"
+kill_signal = "SIGINT"
+kill_timeout = 15000
+```
+
+This worker:
+- Always restarts on exit (except exit code 0).
+- Allows up to 50 restarts before giving up.
+- Resets the restart counter after 10 seconds of uptime.
+- Restarts if memory exceeds 256MB.
+- Restarts every 6 hours via cron.
+- Uses HTTP health check to verify readiness.
+- Sends SIGINT for graceful shutdown with a 15-second timeout.

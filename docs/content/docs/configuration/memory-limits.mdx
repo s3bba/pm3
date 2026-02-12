@@ -1,0 +1,64 @@
+---
+title: Memory Limits
+description: Auto-restart processes that exceed a memory threshold.
+icon: MemoryStick
+---
+
+pm3 can monitor a process's memory usage and automatically restart it if it exceeds a configured limit. This is useful as a safety net against memory leaks.
+
+## Configuration
+
+```toml
+[worker]
+command = "node worker.js"
+max_memory = "512M"
+```
+
+**Type:** `string`
+
+## Supported Formats
+
+| Format | Example | Bytes |
+|---|---|---|
+| Plain bytes | `"1048576"` | 1,048,576 |
+| Kilobytes | `"512K"` or `"512KB"` | 524,288 |
+| Megabytes | `"512M"` or `"512MB"` | 536,870,912 |
+| Gigabytes | `"1G"` or `"1GB"` | 1,073,741,824 |
+
+Fractional values are supported: `"1.5G"` = 1.5 gigabytes.
+
+Suffixes are **case-insensitive**: `"200m"` is the same as `"200M"`.
+
+## Behavior
+
+| Parameter | Value |
+|---|---|
+| Check interval | 5 seconds |
+| Stats poll interval | 2 seconds |
+| Measurement | RSS (Resident Set Size) |
+
+When a process exceeds the memory limit:
+
+1. pm3 sends the configured `kill_signal` (default: `SIGTERM`).
+2. Waits up to `kill_timeout` (default: 5000ms).
+3. Sends `SIGKILL` if the process hasn't exited.
+4. Runs the `post_stop` hook (if configured).
+5. Respawns the process.
+
+<Callout type="warn">
+Memory monitoring uses the `ps` command to read RSS and is only available on Unix systems (macOS and Linux). It is not supported on Windows.
+</Callout>
+
+## Example
+
+```toml title="pm3.toml"
+[api]
+command = "node server.js"
+max_memory = "1G"
+restart = "always"
+
+[worker]
+command = "python worker.py"
+max_memory = "256M"
+max_restarts = 50
+```

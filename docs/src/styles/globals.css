@@ -1,0 +1,20 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/emerald.css";
+@import "fumadocs-ui/css/preset.css";
+
+:root {
+  /* Terminal-inspired green accent */
+  --color-fd-primary: oklch(0.55 0.17 155);
+  --color-fd-primary-foreground: oklch(0.98 0 0);
+}
+
+.dark {
+  --color-fd-primary: oklch(0.72 0.19 155);
+  --color-fd-primary-foreground: oklch(0.13 0 0);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}

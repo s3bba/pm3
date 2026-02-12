@@ -1,0 +1,78 @@
+---
+title: Health Checks
+description: Configure HTTP, HTTPS, and TCP health checks to monitor process readiness.
+icon: HeartPulse
+---
+
+Health checks let pm3 verify that a process is actually ready to serve traffic, not just running. A process with a health check starts in the `Starting` state and transitions to `Online` only after the check passes.
+
+## Configuration
+
+```toml
+[web]
+command = "node server.js"
+health_check = "http://localhost:3000/health"
+```
+
+**Type:** `string` — a URL in one of the supported formats below.
+
+## Supported Protocols
+
+### HTTP / HTTPS
+
+```toml
+health_check = "http://localhost:3000/health"
+health_check = "https://localhost:8443/health"
+```
+
+pm3 sends a GET request to the URL. Any `2xx` status code is considered healthy.
+
+### TCP
+
+```toml
+health_check = "tcp://localhost:6379"
+health_check = "tcp://127.0.0.1:5432"
+```
+
+pm3 attempts a TCP connection to the host and port. A successful connection is considered healthy.
+
+**IPv6** is supported with bracket notation:
+
+```toml
+health_check = "tcp://[::1]:5432"
+```
+
+## Timing
+
+| Parameter | Value |
+|---|---|
+| Check interval | 1 second |
+| Per-attempt timeout | 2 seconds |
+| Total timeout | 30 seconds |
+
+If the health check doesn't pass within 30 seconds, the process transitions to `Unhealthy`.
+
+## State Transitions
+
+```
+Starting → (health check passes) → Online
+Starting → (30s timeout)         → Unhealthy
+```
+
+Without a health check, processes go directly to `Online` once spawned.
+
+## Zero-Downtime Reload
+
+Health checks enable the `pm3 reload` command. During a reload:
+
+1. A new instance of the process is started.
+2. pm3 waits for the new instance's health check to pass.
+3. The old instance is stopped.
+
+This ensures there's no downtime between the old and new process. Without a health check, `reload` behaves the same as `restart`.
+
+```bash
+pm3 reload web
+```
+
+See the [CLI Reference](/docs/cli) for more details on `reload`.

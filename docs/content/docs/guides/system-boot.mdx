@@ -1,0 +1,99 @@
+---
+title: System Boot
+description: Run pm3 processes automatically on system startup.
+icon: Power
+---
+
+pm3 can persist your process list and install a system service so your processes start automatically when you boot your machine.
+
+## Quick Setup
+
+```bash
+# 1. Start your processes
+pm3 start
+
+# 2. Save the current process list
+pm3 save
+
+# 3. Install the boot service
+pm3 startup
+```
+
+That's it. Your processes will now start automatically on boot.
+
+## How It Works
+
+### `pm3 save`
+
+Saves the current process list (names, config file path) to disk. This is the snapshot that `pm3 resurrect` will restore.
+
+```bash
+pm3 save
+```
+
+Run `pm3 save` again whenever you change your `pm3.toml` to update the saved state.
+
+### `pm3 startup`
+
+Installs a system service that runs `pm3 resurrect` on boot.
+
+```bash
+pm3 startup
+```
+
+#### macOS
+
+On macOS, `pm3 startup` creates a **LaunchAgent** (`~/Library/LaunchAgents/`). This runs under your user account and starts when you log in.
+
+#### Linux
+
+On Linux, `pm3 startup` creates a **systemd user service** (`~/.config/systemd/user/`). This runs under your user account and starts on boot (with lingering enabled).
+
+### `pm3 resurrect`
+
+Restores the process list saved by `pm3 save` and starts all processes.
+
+```bash
+pm3 resurrect
+```
+
+You can also run this manually to restore your processes without rebooting.
+
+## Removing Boot Service
+
+```bash
+pm3 unstartup
+```
+
+This removes the system service file. Your processes will no longer start on boot.
+
+## Verifying It Works
+
+After setting up:
+
+1. Run `pm3 save` to save your current state.
+2. Run `pm3 startup` to install the service.
+3. Reboot your machine.
+4. After reboot, run `pm3 list` to verify processes are running.
+
+If processes aren't running after reboot:
+
+- Check that `pm3 save` was run after your last config change.
+- On Linux, ensure systemd lingering is enabled: `loginctl enable-linger $USER`.
+- Try `pm3 resurrect` manually to see if there are errors.
+
+## Typical Workflow
+
+```bash
+# Initial setup
+pm3 start
+pm3 save
+pm3 startup
+
+# After changing pm3.toml
+pm3 restart
+pm3 save
+
+# To disable auto-start
+pm3 unstartup
+```

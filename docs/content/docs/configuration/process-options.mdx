@@ -1,0 +1,232 @@
+---
+title: Process Options
+description: Complete reference for every per-process configuration field in pm3.toml.
+icon: SlidersHorizontal
+---
+
+Every `[process]` table in `pm3.toml` supports the following fields.
+
+## `command` (required)
+
+**Type:** `string`
+
+The shell command to execute. This is the only required field.
+
+```toml
+[web]
+command = "node server.js"
+```
+
+## `cwd`
+
+**Type:** `string` | **Default:** directory containing `pm3.toml`
+
+Working directory for the process.
+
+```toml
+[web]
+command = "npm start"
+cwd = "./frontend"
+```
+
+## `env`
+
+**Type:** `table` (key-value pairs)
+
+Inline environment variables passed to the process.
+
+```toml
+[api]
+command = "node server.js"
+env = { PORT = "3000", NODE_ENV = "development" }
+```
+
+## `env_file`
+
+**Type:** `string` or `array of strings`
+
+Path(s) to `.env` files. Variables are loaded in order — later files override earlier ones.
+
+```toml
+[api]
+command = "node server.js"
+env_file = ".env"
+```
+
+```toml
+[api]
+command = "node server.js"
+env_file = [".env", ".env.local"]
+```
+
+Relative paths are resolved against `cwd` (if set) or the directory containing `pm3.toml`.
+
+## `restart`
+
+**Type:** `string` | **Default:** `"on_failure"`
+
+Restart policy when the process exits.
+
+| Value | Behavior |
+|---|---|
+| `"on_failure"` | Restart on non-zero exit code (unless the exit code is in `stop_exit_codes`) |
+| `"always"` | Always restart, regardless of exit code |
+| `"never"` | Never restart |
+
+```toml
+[worker]
+command = "python worker.py"
+restart = "always"
+```
+
+## `max_restarts`
+
+**Type:** `integer` | **Default:** `15`
+
+Maximum number of restart attempts before giving up. The counter resets once the process stays up for at least `min_uptime` milliseconds.
+
+```toml
+[worker]
+command = "python worker.py"
+max_restarts = 10
+```
+
+## `min_uptime`
+
+**Type:** `integer` (milliseconds) | **Default:** `1000`
+
+If the process stays running for this long, the restart counter resets to zero.
+
+```toml
+[worker]
+command = "python worker.py"
+min_uptime = 5000
+```
+
+## `stop_exit_codes`
+
+**Type:** `array of integers`
+
+Exit codes that should **not** trigger a restart, even with `restart = "on_failure"`. Useful for graceful shutdown codes.
+
+```toml
+[worker]
+command = "python worker.py"
+stop_exit_codes = [0, 143]
+```
+
+## `kill_signal`
+
+**Type:** `string` | **Default:** `"SIGTERM"`
+
+The signal sent to the process when stopping. Common values: `SIGTERM`, `SIGINT`, `SIGHUP`, `SIGKILL`.
+
+Signal names can be specified with or without the `SIG` prefix (e.g., `"TERM"` and `"SIGTERM"` are equivalent).
+
+```toml
+[web]
+command = "node server.js"
+kill_signal = "SIGINT"
+```
+
+## `kill_timeout`
+
+**Type:** `integer` (milliseconds) | **Default:** `5000`
+
+How long to wait after sending `kill_signal` before force-killing with `SIGKILL`.
+
+```toml
+[web]
+command = "node server.js"
+kill_timeout = 10000
+```
+
+## `depends_on`
+
+**Type:** `array of strings`
+
+Processes that must be running before this one starts. pm3 also shuts down dependents in reverse order.
+
+```toml
+[api]
+command = "python app.py"
+depends_on = ["database", "cache"]
+```
+
+## `group`
+
+**Type:** `string`
+
+Assign a group name for batch operations.
+
+```toml
+[frontend]
+command = "npm run dev"
+group = "web"
+
+[api]
+command = "python app.py"
+group = "web"
+```
+
+## `pre_start`
+
+**Type:** `string`
+
+A shell command to run **before** the process starts. Executed via `sh -c`. If the hook fails, the process will not start.
+
+```toml
+[api]
+command = "python app.py"
+pre_start = "python manage.py migrate"
+```
+
+## `post_stop`
+
+**Type:** `string`
+
+A shell command to run **after** the process stops. Executed via `sh -c`.
+
+```toml
+[worker]
+command = "node worker.js"
+post_stop = "echo 'Worker stopped' >> /tmp/events.log"
+```
+
+## `log_date_format`
+
+**Type:** `string`
+
+Custom strftime format for log timestamps.
+
+```toml
+[web]
+command = "node server.js"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+```
+
+## Full Example
+
+```toml title="pm3.toml"
+[web]
+command = "node server.js"
+cwd = "./frontend"
+env = { PORT = "3000", NODE_ENV = "development" }
+env_file = [".env", ".env.local"]
+restart = "on_failure"
+max_restarts = 10
+min_uptime = 5000
+stop_exit_codes = [0]
+kill_signal = "SIGINT"
+kill_timeout = 10000
+depends_on = ["api"]
+group = "app"
+pre_start = "npm run build"
+post_stop = "echo 'web stopped'"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+health_check = "http://localhost:3000/health"
+watch = "./src"
+watch_ignore = ["node_modules", ".git"]
+max_memory = "512M"
+cron_restart = "0 3 * * *"
+```

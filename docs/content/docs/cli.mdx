@@ -1,0 +1,241 @@
+---
+title: CLI Reference
+description: Complete reference for all pm3 commands, flags, and options.
+icon: Terminal
+---
+
+## `pm3 start`
+
+Start all processes or specific ones.
+
+```bash
+pm3 start              # Start all processes
+pm3 start web api      # Start specific processes
+pm3 start --env prod   # Start with environment overrides
+```
+
+| Flag | Description |
+|---|---|
+| `[names...]` | Optional list of process names to start |
+| `--env <name>` | Activate environment-specific config (e.g., `production`) |
+
+If the pm3 daemon isn't running, `start` launches it automatically.
+
+---
+
+## `pm3 stop`
+
+Stop running processes.
+
+```bash
+pm3 stop           # Stop all processes
+pm3 stop web api   # Stop specific processes
+```
+
+Sends the configured `kill_signal` (default: `SIGTERM`) and waits up to `kill_timeout` before force-killing.
+
+---
+
+## `pm3 restart`
+
+Restart running processes.
+
+```bash
+pm3 restart            # Restart all
+pm3 restart web api    # Restart specific processes
+```
+
+Equivalent to stop + start. Restart counters are **not** reset.
+
+---
+
+## `pm3 reload`
+
+Zero-downtime reload (requires a [health check](/docs/configuration/health-checks)).
+
+```bash
+pm3 reload         # Reload all
+pm3 reload web     # Reload specific processes
+```
+
+Starts a new instance, waits for its health check to pass, then stops the old instance. Without a health check, behaves the same as `restart`.
+
+---
+
+## `pm3 list` / `pm3 view`
+
+Show the process status table.
+
+```bash
+pm3 list
+pm3 list --json    # JSON output
+```
+
+```
+┌────────┬───────┬──────────┬────────┬──────────┐
+│ NAME   │ PID   │ STATUS   │ UPTIME │ RESTARTS │
+├────────┼───────┼──────────┼────────┼──────────┤
+│ web    │ 42150 │ ● online │ 2m 13s │ 0        │
+│ worker │ 42151 │ ● online │ 2m 10s │ 1        │
+└────────┴───────┴──────────┴────────┴──────────┘
+```
+
+---
+
+## `pm3 info`
+
+Show detailed information about a specific process.
+
+```bash
+pm3 info web
+pm3 info web --json
+```
+
+Displays PID, status, uptime, restart count, memory usage, config details, and more.
+
+---
+
+## `pm3 log`
+
+View or tail process logs.
+
+```bash
+pm3 log              # Last 15 lines of all processes
+pm3 log web          # Last 15 lines of web
+pm3 log web -f       # Follow (tail) web logs
+pm3 log web --lines 50   # Last 50 lines
+```
+
+| Flag | Description |
+|---|---|
+| `[name]` | Process name (optional — shows all if omitted) |
+| `--lines N` | Number of lines to show (default: 15) |
+| `-f` | Follow mode — stream new log lines in real-time |
+
+---
+
+## `pm3 flush`
+
+Clear log files.
+
+```bash
+pm3 flush          # Clear all logs
+pm3 flush web api  # Clear specific process logs
+```
+
+---
+
+## `pm3 signal`
+
+Send an OS signal to a process.
+
+```bash
+pm3 signal web SIGHUP
+pm3 signal worker USR1
+```
+
+Signal names can be specified with or without the `SIG` prefix.
+
+Common signals: `SIGTERM`, `SIGINT`, `SIGHUP`, `SIGUSR1`, `SIGUSR2`, `SIGKILL`.
+
+---
+
+## `pm3 save`
+
+Persist the current process list so it can be restored later.
+
+```bash
+pm3 save
+```
+
+Used together with `pm3 resurrect` and `pm3 startup` for boot persistence. See the [System Boot Guide](/docs/guides/system-boot).
+
+---
+
+## `pm3 resurrect`
+
+Restore previously saved processes.
+
+```bash
+pm3 resurrect
+```
+
+Loads the process list saved by `pm3 save` and starts all processes.
+
+---
+
+## `pm3 startup`
+
+Install a system service to start pm3 on boot.
+
+```bash
+pm3 startup
+```
+
+- **macOS:** Creates a LaunchAgent.
+- **Linux:** Creates a systemd user service.
+
+See the [System Boot Guide](/docs/guides/system-boot) for details.
+
+---
+
+## `pm3 unstartup`
+
+Remove the system boot service.
+
+```bash
+pm3 unstartup
+```
+
+---
+
+## `pm3 tui`
+
+Launch the interactive terminal UI.
+
+```bash
+pm3 tui
+```
+
+See the [TUI Guide](/docs/tui) for keyboard shortcuts and usage.
+
+---
+
+## `pm3 init`
+
+Interactive configuration wizard. Creates a `pm3.toml` by prompting for process details.
+
+```bash
+pm3 init
+```
+
+---
+
+## `pm3 kill`
+
+Stop all processes and shut down the pm3 daemon.
+
+```bash
+pm3 kill
+```
+
+---
+
+## Global Flags
+
+### `--json`
+
+Output in JSON format for scripting and automation.
+
+```bash
+pm3 list --json
+pm3 info web --json
+```
+
+### `--version`
+
+Print the pm3 version.
+
+```bash
+pm3 --version
+```

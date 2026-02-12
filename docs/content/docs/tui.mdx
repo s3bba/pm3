@@ -1,0 +1,101 @@
+---
+title: TUI Guide
+description: Navigate the interactive terminal UI for real-time process monitoring.
+icon: Monitor
+---
+
+pm3 includes a full-featured terminal user interface (TUI) for monitoring and managing your processes in real-time.
+
+```bash
+pm3 tui
+```
+
+## Views
+
+The TUI has two views: **Process List** and **Log Viewer**.
+
+### Process List
+
+The main view shows a table of all processes with real-time status updates:
+
+```
+ pm3                            ● connected  2 online  1 stopped
+┌────────┬───────┬──────────┬────────┬──────────┬──────┬────────┐
+│ NAME   │ PID   │ STATUS   │ UPTIME │ RESTARTS │ CPU% │ MEM    │
+├────────┼───────┼──────────┼────────┼──────────┼──────┼────────┤
+│ web    │ 42150 │ ● online │ 2m 13s │ 0        │ 1.2% │ 45.2M  │
+│ api    │ 42153 │ ● online │ 2m 10s │ 0        │ 0.8% │ 32.1M  │
+│ worker │ —     │ stopped  │ —      │ 3        │ —    │ —      │
+└────────┴───────┴──────────┴────────┴──────────┴──────┴────────┘
+```
+
+The header shows connection status and process counts by state.
+
+### Log Viewer
+
+Press `Enter` on a process to open its log viewer. Logs stream in real-time with tab-switching between stdout and stderr.
+
+## Status Colors
+
+| Color | Status |
+|---|---|
+| Green | Online — process is healthy and running |
+| Yellow | Starting — process launched, waiting for health check |
+| Red | Unhealthy / Errored — health check failed or process crashed |
+| Gray | Stopped — process is not running |
+
+## Keyboard Shortcuts
+
+### Process List
+
+| Key | Action |
+|---|---|
+| `↑` / `k` | Move cursor up |
+| `↓` / `j` | Move cursor down |
+| `Home` | Jump to first process |
+| `End` | Jump to last process |
+| `Enter` | Open log viewer for selected process |
+| `s` | Start selected process |
+| `x` | Stop selected process |
+| `r` | Restart selected process |
+| `S` | Start **all** processes |
+| `X` | Stop **all** processes |
+| `R` | Restart **all** processes |
+| `q` / `Esc` | Quit TUI |
+| `Ctrl+C` | Force quit |
+
+### Log Viewer
+
+| Key | Action |
+|---|---|
+| `↑` / `k` | Scroll up one line |
+| `↓` / `j` | Scroll down one line |
+| `PgUp` | Scroll up one page |
+| `PgDn` | Scroll down one page |
+| `Home` / `g` | Scroll to top |
+| `End` / `G` | Scroll to bottom |
+| `Tab` | Switch between stdout and stderr |
+| `s` | Start the viewed process |
+| `x` | Stop the viewed process |
+| `r` | Restart the viewed process |
+| `q` / `Esc` | Back to process list |
+| `Ctrl+C` | Force quit |
+
+## Responsive Layout
+
+The TUI adapts to your terminal width:
+
+- **Wide** (100+ columns): Shows all columns (NAME, PID, STATUS, UPTIME, RESTARTS, CPU%, MEM).
+- **Medium** (70+ columns): Hides CPU% and MEM columns.
+- **Narrow** (< 70 columns): Shows only NAME, STATUS, and UPTIME.
+
+## When to Use TUI vs CLI
+
+| Use TUI when... | Use CLI when... |
+|---|---|
+| Monitoring multiple processes at once | Running a quick one-off command |
+| Watching logs in real-time | Scripting or automating with `--json` |
+| Interactive start/stop/restart | CI/CD pipelines |
+| Debugging startup issues | Remote/headless servers |
+
+The TUI refreshes every second and maintains a live connection to the pm3 daemon.

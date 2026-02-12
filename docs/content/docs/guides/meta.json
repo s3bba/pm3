@@ -1,0 +1,5 @@
+{
+  "title": "Guides",
+  "icon": "BookMarked",
+  "pages": ["full-stack-app", "auto-restart", "system-boot", "ci-cd"]
+}

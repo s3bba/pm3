@@ -1,0 +1,35 @@
+---
+title: Configuration
+description: Overview of pm3.toml configuration file structure.
+icon: Settings
+---
+
+pm3 uses a single `pm3.toml` file to define your processes. Each top-level TOML table is a process, and the table name becomes the process name.
+
+```toml title="pm3.toml"
+[web]
+command = "node server.js"
+cwd = "./frontend"
+env = { PORT = "3000" }
+
+[api]
+command = "python app.py"
+depends_on = ["web"]
+```
+
+## Structure
+
+- Each `[name]` table defines a process.
+- Only `command` is required — everything else has sensible defaults.
+- Process names must not contain `/`, `\`, or `..`.
+
+## Sections
+
+<Cards>
+  <Card title="Process Options" href="/docs/configuration/process-options" description="All per-process fields: command, cwd, env, restart policy, signals, hooks, and more." />
+  <Card title="Health Checks" href="/docs/configuration/health-checks" description="HTTP, HTTPS, and TCP health checks to monitor process readiness." />
+  <Card title="File Watching" href="/docs/configuration/file-watching" description="Auto-restart processes when source files change." />
+  <Card title="Cron Restarts" href="/docs/configuration/cron-restarts" description="Schedule periodic process restarts with cron expressions." />
+  <Card title="Memory Limits" href="/docs/configuration/memory-limits" description="Auto-restart processes that exceed a memory threshold." />
+  <Card title="Environments" href="/docs/configuration/environments" description="Environment-specific configuration overrides." />
+</Cards>

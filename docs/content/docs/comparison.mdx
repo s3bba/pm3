@@ -1,0 +1,86 @@
+---
+title: Comparison
+description: How pm3 compares to pm2, foreman, docker-compose, and supervisord.
+icon: GitCompare
+---
+
+pm3 occupies a specific niche: a **developer-focused, single-binary process manager** with a modern config format. Here's how it compares to popular alternatives.
+
+## pm3 vs pm2
+
+[pm2](https://pm2.keymetrics.io/) is a popular Node.js process manager.
+
+| | pm3 | pm2 |
+|---|---|---|
+| **Runtime** | Single Rust binary | Requires Node.js |
+| **Config format** | TOML | JSON/YAML/JS |
+| **Language focus** | Language-agnostic | Node.js-centric |
+| **TUI** | Built-in | Via `pm2 monit` |
+| **Health checks** | HTTP, HTTPS, TCP | Custom module |
+| **File watching** | Built-in | Built-in |
+| **Memory limits** | Built-in | Built-in |
+| **Cluster mode** | Not supported | Built-in (Node.js) |
+| **Install size** | ~10MB binary | ~50MB+ (Node.js + npm) |
+
+**Choose pm3 if** you want a lightweight, language-agnostic process manager without a Node.js dependency.
+
+## pm3 vs foreman / overmind
+
+[foreman](https://github.com/ddollar/foreman) and [overmind](https://github.com/DarthSim/overmind) use Procfile-based configuration.
+
+| | pm3 | foreman / overmind |
+|---|---|---|
+| **Config format** | TOML (rich) | Procfile (minimal) |
+| **Health checks** | Built-in | Not supported |
+| **File watching** | Built-in | Not supported |
+| **Memory limits** | Built-in | Not supported |
+| **Dependencies** | `depends_on` ordering | Not supported |
+| **Daemon mode** | Background daemon | Foreground only |
+| **Restart policies** | Configurable | Basic |
+| **Boot persistence** | `pm3 startup` | External setup |
+
+**Choose pm3 if** you need health checks, restart policies, or daemon mode. Choose foreman/overmind for simple foreground process running.
+
+## pm3 vs docker-compose
+
+[docker-compose](https://docs.docker.com/compose/) manages containerized services.
+
+| | pm3 | docker-compose |
+|---|---|---|
+| **Isolation** | OS processes | Docker containers |
+| **Config format** | TOML | YAML |
+| **Setup overhead** | Install one binary | Install Docker |
+| **Startup speed** | Instant | Container pull/build |
+| **Resource usage** | Native processes | Container overhead |
+| **Networking** | Host networking | Virtual networking |
+| **Health checks** | Built-in | Built-in |
+| **Dependencies** | `depends_on` | `depends_on` |
+
+**Choose pm3 if** you want to run processes directly without containers — especially for local development. Choose docker-compose for production deployments or when you need container isolation.
+
+## pm3 vs supervisord
+
+[supervisord](http://supervisord.org/) is a traditional Unix process control system.
+
+| | pm3 | supervisord |
+|---|---|---|
+| **Runtime** | Single Rust binary | Requires Python |
+| **Config format** | TOML | INI |
+| **TUI** | Built-in | Not built-in |
+| **Health checks** | HTTP, HTTPS, TCP | Not built-in |
+| **File watching** | Built-in | Not built-in |
+| **Memory limits** | Built-in | Not built-in |
+| **Cross-platform** | macOS, Linux, Windows | Unix only |
+| **Cron restarts** | Built-in | Not built-in |
+
+**Choose pm3 if** you want a modern alternative with more features and no Python dependency.
+
+## Summary
+
+pm3's differentiators:
+
+- **Single binary** — no runtime dependencies (Node.js, Python, Docker).
+- **TOML config** — expressive but simple, with per-process options.
+- **Built-in TUI** — real-time monitoring without external tools.
+- **Batteries included** — health checks, file watching, memory limits, cron restarts, and environment-specific config all built in.
+- **Cross-platform** — macOS, Linux, and Windows from the same binary.

@@ -1,0 +1,78 @@
+---
+title: Environments
+description: Environment-specific configuration overrides in pm3.toml.
+icon: Layers
+---
+
+pm3 supports environment-specific configuration, letting you override environment variables per deployment target (e.g., production, staging).
+
+## Syntax
+
+Define environment overrides as sub-tables named `[process.env_<environment>]`:
+
+```toml title="pm3.toml"
+[api]
+command = "node server.js"
+env = { PORT = "3000", DATABASE_URL = "postgres://localhost/dev" }
+
+[api.env_production]
+DATABASE_URL = "postgres://prod-host/mydb"
+NODE_ENV = "production"
+
+[api.env_staging]
+DATABASE_URL = "postgres://staging-host/mydb"
+NODE_ENV = "staging"
+```
+
+## Usage
+
+Activate an environment with the `--env` flag:
+
+```bash
+pm3 start --env production
+```
+
+This starts all processes with their base `env` merged with the environment-specific overrides.
+
+## Merge Behavior
+
+Environment-specific variables are **merged** with the base `env` table:
+
+- Variables defined in the environment override override their base values.
+- Variables in the base `env` that aren't overridden are preserved.
+- New variables defined only in the environment override are added.
+
+Using the example above, `pm3 start --env production` would result in:
+
+| Variable | Value |
+|---|---|
+| `PORT` | `"3000"` (from base) |
+| `DATABASE_URL` | `"postgres://prod-host/mydb"` (overridden) |
+| `NODE_ENV` | `"production"` (added) |
+
+## Example
+
+```toml title="pm3.toml"
+[web]
+command = "npm start"
+env = { PORT = "3000", API_URL = "http://localhost:8080" }
+
+[web.env_production]
+API_URL = "https://api.example.com"
+
+[api]
+command = "python app.py"
+env = { PORT = "8080", DEBUG = "true" }
+
+[api.env_production]
+DEBUG = "false"
+PORT = "80"
+```
+
+```bash
+# Development (default)
+pm3 start
+
+# Production
+pm3 start --env production
+```

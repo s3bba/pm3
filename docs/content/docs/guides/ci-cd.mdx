@@ -1,0 +1,125 @@
+---
+title: CI/CD
+description: Use pm3 in CI/CD pipelines with JSON output and health check gating.
+icon: Workflow
+---
+
+pm3's `--json` flag and health checks make it useful for CI/CD pipelines — starting services, waiting for readiness, running tests, and shutting down.
+
+## JSON Output
+
+Add `--json` to any command for machine-readable output:
+
+```bash
+pm3 list --json
+```
+
+```json
+[
+  {
+    "name": "api",
+    "pid": 42150,
+    "status": "online",
+    "uptime": 130,
+    "restarts": 0
+  }
+]
+```
+
+```bash
+pm3 info api --json
+```
+
+## Health Check Gating
+
+Use health checks to wait for services to be ready before running tests:
+
+```toml title="pm3.toml"
+[api]
+command = "node server.js"
+health_check = "http://localhost:8080/health"
+
+[database]
+command = "docker start -a postgres-test"
+health_check = "tcp://localhost:5432"
+```
+
+### Polling for Readiness
+
+A simple shell script to wait for all processes to be online:
+
+```bash title="wait-for-ready.sh"
+#!/bin/bash
+set -e
+
+pm3 start
+
+# Poll until all processes are online
+for i in $(seq 1 30); do
+  ALL_ONLINE=$(pm3 list --json | jq 'all(.status == "online")')
+  if [ "$ALL_ONLINE" = "true" ]; then
+    echo "All processes online"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Timeout waiting for processes"
+pm3 list
+exit 1
+```
+
+## Example CI Pipeline
+
+```yaml title=".github/workflows/test.yml"
+- name: Install pm3
+  run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/frectonz/pm3/releases/download/0.1.3/pm3-installer.sh | sh
+
+- name: Start services
+  run: pm3 start
+
+- name: Wait for readiness
+  run: ./wait-for-ready.sh
+
+- name: Run tests
+  run: npm test
+
+- name: Cleanup
+  if: always()
+  run: pm3 kill
+```
+
+## Scripting Tips
+
+### Check if a specific process is online
+
+```bash
+STATUS=$(pm3 info api --json | jq -r '.status')
+if [ "$STATUS" = "online" ]; then
+  echo "API is ready"
+fi
+```
+
+### Get process PID
+
+```bash
+PID=$(pm3 info api --json | jq -r '.pid')
+```
+
+### Count running processes
+
+```bash
+ONLINE=$(pm3 list --json | jq '[.[] | select(.status == "online")] | length')
+echo "$ONLINE processes online"
+```
+
+### Fail if any process errored
+
+```bash
+ERRORED=$(pm3 list --json | jq '[.[] | select(.status == "errored")] | length')
+if [ "$ERRORED" -gt 0 ]; then
+  echo "Some processes have errors"
+  pm3 list
+  exit 1
+fi
+```

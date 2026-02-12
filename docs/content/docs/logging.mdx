@@ -1,0 +1,85 @@
+---
+title: Logging
+description: Log files, rotation, tailing, and timestamp formatting.
+icon: FileText
+---
+
+pm3 captures all process output into log files and provides tools for viewing, tailing, and managing them.
+
+## Log Files
+
+Each process gets two log files:
+
+| File | Content |
+|---|---|
+| `<name>-out.log` | Standard output (stdout) |
+| `<name>-err.log` | Standard error (stderr) |
+
+Log files are stored in `~/.local/share/pm3/logs/`.
+
+## PTY Support
+
+pm3 uses a PTY (pseudo-terminal) for child process stdout. This preserves line-buffered output behavior, ensuring logs appear immediately rather than being delayed by output buffering. Each line is flushed to disk immediately for real-time visibility.
+
+## Viewing Logs
+
+### Default (last 15 lines)
+
+```bash
+pm3 log web
+```
+
+### Custom line count
+
+```bash
+pm3 log web --lines 50
+```
+
+### Follow mode
+
+```bash
+pm3 log web -f
+```
+
+Streams new log lines in real-time, similar to `tail -f`. Press `Ctrl+C` to stop.
+
+## Clearing Logs
+
+```bash
+pm3 flush          # Clear all process logs
+pm3 flush web api  # Clear specific process logs
+```
+
+## Log Rotation
+
+pm3 automatically rotates log files:
+
+| Parameter | Value |
+|---|---|
+| Max file size | 10 MB |
+| Rotated files kept | 3 |
+
+When a log file exceeds 10MB, it's rotated and up to 3 old files are kept.
+
+## Timestamp Formatting
+
+Customize log timestamps with the `log_date_format` option using strftime format strings:
+
+```toml
+[web]
+command = "node server.js"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+```
+
+Common format specifiers:
+
+| Specifier | Example | Description |
+|---|---|---|
+| `%Y` | `2025` | Four-digit year |
+| `%m` | `03` | Two-digit month |
+| `%d` | `15` | Two-digit day |
+| `%H` | `14` | 24-hour hour |
+| `%M` | `30` | Minute |
+| `%S` | `45` | Second |
+| `%T` | `14:30:45` | Equivalent to `%H:%M:%S` |
+| `%F` | `2025-03-15` | Equivalent to `%Y-%m-%d` |

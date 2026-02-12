@@ -1,0 +1,67 @@
+---
+title: File Watching
+description: Auto-restart processes when source files change.
+icon: Eye
+---
+
+pm3 can watch your source files and automatically restart a process when changes are detected — perfect for development workflows.
+
+## Configuration
+
+### Watch the Working Directory
+
+```toml
+[web]
+command = "node server.js"
+watch = true
+```
+
+When `watch = true`, pm3 watches the process's working directory (`cwd`, or the directory containing `pm3.toml`).
+
+### Watch a Specific Path
+
+```toml
+[web]
+command = "node server.js"
+watch = "./src"
+```
+
+You can specify a relative path to watch only a subdirectory.
+
+### Ignore Patterns
+
+```toml
+[web]
+command = "node server.js"
+watch = "./src"
+watch_ignore = ["node_modules", ".git", "dist", "*.log"]
+```
+
+**Type:** `array of strings`
+
+Patterns in `watch_ignore` are matched against directory names and path suffixes. Common patterns to ignore:
+- `"node_modules"` — Node.js dependencies
+- `".git"` — Git internals
+- `"dist"` or `"build"` — build output
+- `"*.log"` — log files
+
+## Behavior
+
+- **Debounce:** File change events are debounced with a 500ms window. Multiple rapid changes trigger only one restart.
+- **Restart:** When a change is detected, pm3 performs a graceful restart of the process (sends `kill_signal`, waits `kill_timeout`, then respawns).
+- **Restart counter:** File-watch restarts do **not** count toward `max_restarts`.
+
+## Example
+
+```toml title="pm3.toml"
+[frontend]
+command = "npm run dev"
+cwd = "./frontend"
+watch = "./src"
+watch_ignore = ["node_modules", ".git"]
+
+[api]
+command = "cargo run"
+cwd = "./api"
+watch = "./src"
+```

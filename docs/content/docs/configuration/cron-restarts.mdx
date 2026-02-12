@@ -1,0 +1,57 @@
+---
+title: Cron Restarts
+description: Schedule periodic process restarts using cron expressions.
+icon: Clock
+---
+
+pm3 supports scheduled restarts via standard cron expressions. This is useful for long-running processes that benefit from periodic refreshes — clearing caches, releasing memory, or rotating connections.
+
+## Configuration
+
+```toml
+[worker]
+command = "node worker.js"
+cron_restart = "0 3 * * *"
+```
+
+**Type:** `string` — a standard 5-field cron expression.
+
+## Cron Syntax
+
+```
+┌───────── minute (0-59)
+│ ┌─────── hour (0-23)
+│ │ ┌───── day of month (1-31)
+│ │ │ ┌─── month (1-12)
+│ │ │ │ ┌─ day of week (0-6, Sunday = 0)
+│ │ │ │ │
+* * * * *
+```
+
+## Examples
+
+| Expression | Schedule |
+|---|---|
+| `"0 3 * * *"` | Daily at 3:00 AM (UTC) |
+| `"0 */6 * * *"` | Every 6 hours |
+| `"*/30 * * * *"` | Every 30 minutes |
+| `"0 0 * * 0"` | Weekly on Sunday at midnight |
+| `"0 0 1,15 * *"` | 1st and 15th of each month |
+
+## Behavior
+
+- **Timezone:** Cron schedules are evaluated in **UTC**.
+- **Graceful restart:** When triggered, pm3 performs a graceful stop (sends `kill_signal`, waits `kill_timeout`, runs `post_stop` hook) then respawns the process.
+- **Restart counter:** Cron restarts are **preserved** in the restart counter — they do count toward `max_restarts`.
+
+## Example
+
+```toml title="pm3.toml"
+[cache-worker]
+command = "python cache_worker.py"
+restart = "always"
+cron_restart = "0 */6 * * *"
+max_memory = "256M"
+```
+
+This worker restarts every 6 hours and also restarts if it exceeds 256MB of memory.

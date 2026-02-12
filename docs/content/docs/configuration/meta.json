@@ -1,0 +1,13 @@
+{
+  "title": "Configuration",
+  "icon": "Settings",
+  "pages": [
+    "index",
+    "process-options",
+    "health-checks",
+    "file-watching",
+    "cron-restarts",
+    "memory-limits",
+    "environments"
+  ]
+}
