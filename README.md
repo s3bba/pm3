@@ -6,6 +6,20 @@ A process manager. Define processes in `pm3.toml`, manage them with simple comma
 
 [![asciicast](https://asciinema.org/a/4Kat5eEd2jJPxTaz.svg)](https://asciinema.org/a/4Kat5eEd2jJPxTaz)
 
+## Installation
+
+### macOS / Linux
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/frectonz/pm3/releases/latest/download/pm3-installer.sh | sh
+```
+
+### Windows
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/frectonz/pm3/releases/latest/download/pm3-installer.ps1 | iex"
+```
+
 ## Quick Start
 
 Create a `pm3.toml` in your project directory (or run `pm3 init` to generate one interactively):
