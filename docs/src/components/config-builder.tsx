@@ -306,15 +306,8 @@ function TomlPreview({ code }: { code: string }) {
         </button>
       </div>
       <div
-        className="text-sm overflow-x-auto min-h-[200px]"
-        dangerouslySetInnerHTML={{
-          __html: html
-            .replace(/class="[^"]*"/, "")
-            .replace(
-              /style="([^"]*)"/,
-              'style="$1;background:transparent;padding:1rem;margin:0"',
-            ),
-        }}
+        className="toml-preview text-sm overflow-x-auto min-h-[200px]"
+        dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>
   );

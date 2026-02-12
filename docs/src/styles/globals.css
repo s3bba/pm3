@@ -38,3 +38,10 @@ body {
 [data-theme-toggle] > * {
   border-radius: 0 !important;
 }
+
+/* Config builder TOML preview: override shiki defaults */
+.toml-preview pre.shiki {
+  background: transparent !important;
+  padding: 1rem 0;
+  margin: 0;
+}
