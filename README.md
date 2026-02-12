@@ -108,6 +108,9 @@ watch_ignore = ["node_modules", ".git"]
 depends_on = ["db", "cache"]        # start after these processes are running
 group = "backend"                   # group name for batch operations
 
+# Cluster mode
+instances = 4                       # spawn N instances of this process
+
 # Lifecycle hooks
 pre_start = "npm run migrate"       # run before the process starts
 post_stop = "echo stopped"          # run after the process stops
@@ -137,6 +140,18 @@ DATABASE_URL = "postgres://staging/db"
 ```
 
 Activate with `pm3 start --env production`.
+
+### Cluster Mode
+
+Run multiple instances of the same process:
+
+```toml
+[worker]
+command = "python worker.py"
+instances = 4
+```
+
+This spawns `worker:0` through `worker:3`, each with `PM3_INSTANCE_ID` and `PM3_INSTANCE_COUNT` environment variables. Manage all instances at once (`pm3 stop worker`) or individually (`pm3 stop worker:2`).
 
 ## License
 

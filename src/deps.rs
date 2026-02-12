@@ -283,6 +283,7 @@ mod tests {
             post_stop: None,
             cron_restart: None,
             log_date_format: None,
+            instances: None,
             environments: HashMap::new(),
         }
     }

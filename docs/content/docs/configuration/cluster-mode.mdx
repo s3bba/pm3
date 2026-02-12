@@ -1,0 +1,121 @@
+---
+title: Cluster Mode
+description: Run multiple instances of a process with automatic instance management.
+icon: Layers
+---
+
+Cluster mode lets you run N copies of the same process definition. Instead of duplicating config entries (`worker-1`, `worker-2`, etc.), set `instances` and pm3 handles the rest.
+
+## Configuration
+
+Add `instances` to any process:
+
+```toml title="pm3.toml"
+[worker]
+command = "python worker.py"
+instances = 4
+```
+
+This spawns four processes: `worker:0`, `worker:1`, `worker:2`, and `worker:3`.
+
+## Instance Naming
+
+Instances are named `<process>:<index>`, where the index is 0-based:
+
+| Config name | Instances | Resulting processes |
+|---|---|---|
+| `worker` | `3` | `worker:0`, `worker:1`, `worker:2` |
+| `api` | `2` | `api:0`, `api:1` |
+
+Each instance appears as a separate row in `pm3 list`.
+
+## Environment Variables
+
+Every instance automatically receives two environment variables:
+
+| Variable | Description | Example |
+|---|---|---|
+| `PM3_INSTANCE_ID` | 0-based index of this instance | `0`, `1`, `2`, ... |
+| `PM3_INSTANCE_COUNT` | Total number of instances | `4` |
+
+Use these in your application to partition work, bind to different ports, etc:
+
+```python
+import os
+
+instance_id = int(os.environ["PM3_INSTANCE_ID"])
+port = 3000 + instance_id
+```
+
+## Managing Instances
+
+You can target all instances at once using the base name, or a specific instance by its full name:
+
+```sh
+# Start all instances
+pm3 start worker
+
+# Stop all instances
+pm3 stop worker
+
+# Stop just one instance
+pm3 stop worker:2
+
+# Restart a specific instance
+pm3 restart worker:0
+
+# View logs for one instance
+pm3 log worker:1
+```
+
+## Dependencies
+
+If a process depends on a clustered process, it waits for **all** instances to be online before starting:
+
+```toml
+[db]
+command = "postgres"
+instances = 2
+
+[web]
+command = "node server.js"
+depends_on = ["db"]
+```
+
+Here, `web` waits for both `db:0` and `db:1` to be online. If `web` is also clustered, each web instance waits for all db instances.
+
+## Groups
+
+Instances automatically get their `group` set to the logical process name (unless you specified a custom group). This means `pm3 stop worker` resolves all instances via both cluster prefix matching and group matching.
+
+```toml
+[worker]
+command = "python worker.py"
+instances = 4
+group = "backend"  # optional: overrides the auto-set group
+```
+
+## Logging
+
+Each instance gets its own log files following the standard naming convention:
+
+- `worker:0-out.log`, `worker:0-err.log`
+- `worker:1-out.log`, `worker:1-err.log`
+- etc.
+
+## Example: Multiple Web Workers
+
+```toml title="pm3.toml"
+[db]
+command = "postgres"
+health_check = "tcp://localhost:5432"
+
+[web]
+command = "node server.js"
+instances = 4
+depends_on = ["db"]
+health_check = "http://localhost:3000/health"
+env = { NODE_ENV = "production" }
+```
+
+This starts one database and four web workers, each receiving `PM3_INSTANCE_ID` to determine its port or worker identity.

@@ -8,6 +8,7 @@
     "file-watching",
     "cron-restarts",
     "memory-limits",
-    "environments"
+    "environments",
+    "cluster-mode"
   ]
 }

@@ -113,6 +113,8 @@ impl Manager {
         env: Option<String>,
         wait: bool,
     ) -> Response {
+        let configs = expand_instances(configs);
+
         let mut to_start: Vec<(String, ProcessConfig)> = match names {
             Some(ref requested) => {
                 let resolved = match resolve_config_names(requested, &configs) {
@@ -1159,15 +1161,26 @@ fn resolve_config_names(
         if configs.contains_key(name) {
             result.push(name.clone());
         } else {
-            let group_matches: Vec<String> = configs
-                .iter()
-                .filter(|(_, c)| c.group.as_deref() == Some(name))
-                .map(|(k, _)| k.clone())
+            // Try cluster prefix match: "web" -> "web:0", "web:1", ...
+            let prefix = format!("{}:", name);
+            let cluster_matches: Vec<String> = configs
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned()
                 .collect();
-            if group_matches.is_empty() {
-                return Err(format!("process or group '{}' not found in configs", name));
+            if !cluster_matches.is_empty() {
+                result.extend(cluster_matches);
+            } else {
+                let group_matches: Vec<String> = configs
+                    .iter()
+                    .filter(|(_, c)| c.group.as_deref() == Some(name))
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                if group_matches.is_empty() {
+                    return Err(format!("process or group '{}' not found in configs", name));
+                }
+                result.extend(group_matches);
             }
-            result.extend(group_matches);
         }
     }
     Ok(result)
@@ -1179,15 +1192,26 @@ fn resolve_table_names(requested: &[String], table: &ProcessTable) -> Result<Vec
         if table.contains_key(name) {
             result.push(name.clone());
         } else {
-            let group_matches: Vec<String> = table
-                .iter()
-                .filter(|(_, m)| m.config.group.as_deref() == Some(name))
-                .map(|(k, _)| k.clone())
+            // Try cluster prefix match: "web" -> "web:0", "web:1", ...
+            let prefix = format!("{}:", name);
+            let cluster_matches: Vec<String> = table
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned()
                 .collect();
-            if group_matches.is_empty() {
-                return Err(format!("process or group not found: {name}"));
+            if !cluster_matches.is_empty() {
+                result.extend(cluster_matches);
+            } else {
+                let group_matches: Vec<String> = table
+                    .iter()
+                    .filter(|(_, m)| m.config.group.as_deref() == Some(name))
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                if group_matches.is_empty() {
+                    return Err(format!("process or group not found: {name}"));
+                }
+                result.extend(group_matches);
             }
-            result.extend(group_matches);
         }
     }
     Ok(result)
@@ -1253,4 +1277,249 @@ struct DumpEntry {
 
 fn is_pid_alive(pid: u32) -> bool {
     crate::sys::is_pid_alive(pid)
+}
+
+/// Expand cluster-mode processes: entries with `instances > 1` are replaced by
+/// N individual entries named `<name>:0` .. `<name>:N-1`.  Dependencies that
+/// reference a clustered name are rewritten to point at the individual instances.
+pub fn expand_instances(configs: HashMap<String, ProcessConfig>) -> HashMap<String, ProcessConfig> {
+    // First pass: identify which logical names are clustered and how many instances.
+    let mut cluster_map: HashMap<String, u32> = HashMap::new();
+    for (name, config) in &configs {
+        let n = config.instances.unwrap_or(1);
+        if n > 1 {
+            cluster_map.insert(name.clone(), n);
+        }
+    }
+
+    // If nothing is clustered, return as-is.
+    if cluster_map.is_empty() {
+        return configs;
+    }
+
+    let mut result: HashMap<String, ProcessConfig> = HashMap::new();
+
+    for (name, config) in configs {
+        let n = config.instances.unwrap_or(1);
+
+        // Rewrite depends_on: replace any clustered dep name with its instance names.
+        let rewrite_deps = |deps: &Option<Vec<String>>| -> Option<Vec<String>> {
+            let deps = deps.as_ref()?;
+            let mut new_deps = Vec::new();
+            for dep in deps {
+                if let Some(&count) = cluster_map.get(dep) {
+                    for i in 0..count {
+                        new_deps.push(format!("{}:{}", dep, i));
+                    }
+                } else {
+                    new_deps.push(dep.clone());
+                }
+            }
+            Some(new_deps)
+        };
+
+        if n <= 1 {
+            // Non-clustered: just rewrite deps if needed.
+            let mut cfg = config;
+            cfg.depends_on = rewrite_deps(&cfg.depends_on);
+            result.insert(name, cfg);
+        } else {
+            // Clustered: expand into N entries.
+            for i in 0..n {
+                let instance_name = format!("{}:{}", name, i);
+                let mut cfg = config.clone();
+                cfg.instances = Some(1);
+                cfg.depends_on = rewrite_deps(&cfg.depends_on);
+
+                // Auto-set group to logical name if user didn't specify one.
+                if cfg.group.is_none() {
+                    cfg.group = Some(name.clone());
+                }
+
+                // Inject PM3_INSTANCE_ID and PM3_INSTANCE_COUNT.
+                let env = cfg.env.get_or_insert_with(HashMap::new);
+                env.insert("PM3_INSTANCE_ID".to_string(), i.to_string());
+                env.insert("PM3_INSTANCE_COUNT".to_string(), n.to_string());
+
+                result.insert(instance_name, cfg);
+            }
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ProcessConfig;
+
+    fn cfg(command: &str) -> ProcessConfig {
+        ProcessConfig {
+            command: command.to_string(),
+            cwd: None,
+            env: None,
+            env_file: None,
+            health_check: None,
+            kill_timeout: None,
+            kill_signal: None,
+            max_restarts: None,
+            max_memory: None,
+            min_uptime: None,
+            stop_exit_codes: None,
+            watch: None,
+            watch_ignore: None,
+            depends_on: None,
+            restart: None,
+            group: None,
+            pre_start: None,
+            post_stop: None,
+            cron_restart: None,
+            log_date_format: None,
+            instances: None,
+            environments: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_expand_instances_no_clusters() {
+        let mut configs = HashMap::new();
+        configs.insert("web".to_string(), cfg("node server.js"));
+        configs.insert("db".to_string(), cfg("postgres"));
+        let result = expand_instances(configs.clone());
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("web"));
+        assert!(result.contains_key("db"));
+    }
+
+    #[test]
+    fn test_expand_instances_basic() {
+        let mut configs = HashMap::new();
+        let mut web = cfg("node server.js");
+        web.instances = Some(3);
+        configs.insert("web".to_string(), web);
+
+        let result = expand_instances(configs);
+        assert_eq!(result.len(), 3);
+        for i in 0..3 {
+            let name = format!("web:{}", i);
+            let c = result.get(&name).unwrap();
+            assert_eq!(c.command, "node server.js");
+            assert_eq!(c.instances, Some(1));
+            assert_eq!(c.group.as_deref(), Some("web"));
+            let env = c.env.as_ref().unwrap();
+            assert_eq!(env.get("PM3_INSTANCE_ID").unwrap(), &i.to_string());
+            assert_eq!(env.get("PM3_INSTANCE_COUNT").unwrap(), "3");
+        }
+    }
+
+    #[test]
+    fn test_expand_instances_preserves_custom_group() {
+        let mut configs = HashMap::new();
+        let mut web = cfg("node server.js");
+        web.instances = Some(2);
+        web.group = Some("backend".to_string());
+        configs.insert("web".to_string(), web);
+
+        let result = expand_instances(configs);
+        for i in 0..2 {
+            let c = result.get(&format!("web:{}", i)).unwrap();
+            assert_eq!(c.group.as_deref(), Some("backend"));
+        }
+    }
+
+    #[test]
+    fn test_expand_instances_rewrites_deps() {
+        let mut configs = HashMap::new();
+
+        let mut db = cfg("postgres");
+        db.instances = Some(2);
+        configs.insert("db".to_string(), db);
+
+        let mut web = cfg("node server.js");
+        web.depends_on = Some(vec!["db".to_string()]);
+        configs.insert("web".to_string(), web);
+
+        let result = expand_instances(configs);
+        // web should now depend on db:0 and db:1
+        let web_cfg = result.get("web").unwrap();
+        let deps = web_cfg.depends_on.as_ref().unwrap();
+        assert!(deps.contains(&"db:0".to_string()));
+        assert!(deps.contains(&"db:1".to_string()));
+        assert_eq!(deps.len(), 2);
+    }
+
+    #[test]
+    fn test_expand_instances_clustered_depends_on_clustered() {
+        let mut configs = HashMap::new();
+
+        let mut db = cfg("postgres");
+        db.instances = Some(2);
+        configs.insert("db".to_string(), db);
+
+        let mut web = cfg("node server.js");
+        web.instances = Some(3);
+        web.depends_on = Some(vec!["db".to_string()]);
+        configs.insert("web".to_string(), web);
+
+        let result = expand_instances(configs);
+        assert_eq!(result.len(), 5); // 2 db + 3 web
+
+        // Each web instance should depend on db:0 and db:1
+        for i in 0..3 {
+            let c = result.get(&format!("web:{}", i)).unwrap();
+            let deps = c.depends_on.as_ref().unwrap();
+            assert!(deps.contains(&"db:0".to_string()));
+            assert!(deps.contains(&"db:1".to_string()));
+            assert_eq!(deps.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_expand_instances_single_passthrough() {
+        let mut configs = HashMap::new();
+        let mut web = cfg("node server.js");
+        web.instances = Some(1);
+        configs.insert("web".to_string(), web);
+
+        let result = expand_instances(configs);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains_key("web"));
+    }
+
+    #[test]
+    fn test_resolve_config_names_cluster_prefix() {
+        let mut configs = HashMap::new();
+        configs.insert("web:0".to_string(), cfg("node server.js"));
+        configs.insert("web:1".to_string(), cfg("node server.js"));
+        configs.insert("web:2".to_string(), cfg("node server.js"));
+        configs.insert("db".to_string(), cfg("postgres"));
+
+        let result = resolve_config_names(&["web".to_string()], &configs).unwrap();
+        assert_eq!(result.len(), 3);
+        assert!(result.contains(&"web:0".to_string()));
+        assert!(result.contains(&"web:1".to_string()));
+        assert!(result.contains(&"web:2".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_config_names_exact_match_preferred() {
+        let mut configs = HashMap::new();
+        configs.insert("web".to_string(), cfg("node server.js"));
+        configs.insert("web:0".to_string(), cfg("node server.js"));
+
+        let result = resolve_config_names(&["web".to_string()], &configs).unwrap();
+        assert_eq!(result, vec!["web".to_string()]);
+    }
+
+    #[test]
+    fn test_resolve_config_names_group_fallback() {
+        let mut configs = HashMap::new();
+        let mut web = cfg("node server.js");
+        web.group = Some("backend".to_string());
+        configs.insert("web".to_string(), web);
+
+        let result = resolve_config_names(&["backend".to_string()], &configs).unwrap();
+        assert_eq!(result, vec!["web".to_string()]);
+    }
 }

@@ -56,6 +56,7 @@ pub struct ProcessConfig {
     pub post_stop: Option<String>,
     pub cron_restart: Option<String>,
     pub log_date_format: Option<String>,
+    pub instances: Option<u32>,
     pub environments: HashMap<String, HashMap<String, String>>,
 }
 
@@ -121,6 +122,7 @@ struct RawProcessConfig {
     post_stop: Option<String>,
     cron_restart: Option<String>,
     log_date_format: Option<String>,
+    instances: Option<u32>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -156,7 +158,7 @@ pub fn parse_config(content: &str) -> Result<HashMap<String, ProcessConfig>, Con
     let mut configs = HashMap::new();
 
     for (name, value) in table {
-        if name.contains('/') || name.contains('\\') || name.contains("..") {
+        if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains(':') {
             return Err(ConfigError::InvalidProcessName(name));
         }
 
@@ -204,6 +206,7 @@ pub fn parse_config(content: &str) -> Result<HashMap<String, ProcessConfig>, Con
                 post_stop: raw.post_stop,
                 cron_restart: raw.cron_restart,
                 log_date_format: raw.log_date_format,
+                instances: raw.instances,
                 environments,
             },
         );
@@ -496,6 +499,7 @@ DATABASE_URL = "postgres://staging/db"
             post_stop: None,
             cron_restart: None,
             log_date_format: None,
+            instances: None,
             environments: HashMap::new(),
         }
     }
@@ -569,5 +573,36 @@ B = "3"
         let input = "[valid-name_123]\ncommand = \"echo hi\"\n";
         let configs = parse_config(input).unwrap();
         assert!(configs.contains_key("valid-name_123"));
+    }
+
+    #[test]
+    fn test_colon_in_name_rejected() {
+        let input = "[\"web:0\"]\ncommand = \"echo hi\"\n";
+        let result = parse_config(input);
+        assert_eq!(
+            result.unwrap_err(),
+            ConfigError::InvalidProcessName("web:0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_instances_field_parsed() {
+        let input = r#"
+[web]
+command = "node server.js"
+instances = 4
+"#;
+        let configs = parse_config(input).unwrap();
+        assert_eq!(configs["web"].instances, Some(4));
+    }
+
+    #[test]
+    fn test_instances_default_none() {
+        let input = r#"
+[web]
+command = "node server.js"
+"#;
+        let configs = parse_config(input).unwrap();
+        assert!(configs["web"].instances.is_none());
     }
 }

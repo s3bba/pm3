@@ -32,6 +32,7 @@ fn test_config(command: &str) -> ProcessConfig {
         post_stop: None,
         cron_restart: None,
         log_date_format: None,
+        instances: None,
         environments: HashMap::new(),
     }
 }
@@ -4579,4 +4580,223 @@ fn test_dump_serialization_roundtrip() {
     assert_eq!(restored[0].pid, Some(12345));
     assert_eq!(restored[0].restarts, 3);
     assert_eq!(restored[0].config.command, "sleep 999");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cluster_mode_starts_multiple_instances() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut web = test_config("sleep 999");
+    web.instances = Some(3);
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), web);
+    let start_resp = send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+            wait: false,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&start_resp, Response::Success { .. }),
+        "expected Success, got: {start_resp:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            assert_eq!(
+                processes.len(),
+                3,
+                "expected 3 instances, got: {processes:?}"
+            );
+            let mut names: Vec<&str> = processes.iter().map(|p| p.name.as_str()).collect();
+            names.sort();
+            assert_eq!(names, vec!["web:0", "web:1", "web:2"]);
+            for p in processes {
+                assert!(p.pid.is_some(), "PID should be set for {}", p.name);
+                assert_eq!(p.status, ProcessStatus::Online);
+                assert_eq!(p.group.as_deref(), Some("web"));
+            }
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cluster_mode_stop_single_instance() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut web = test_config("sleep 999");
+    web.instances = Some(3);
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), web);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+            wait: false,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Stop just web:1
+    let stop_resp = send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["web:1".to_string()]),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&stop_resp, Response::Success { .. }),
+        "expected Success, got: {stop_resp:?}"
+    );
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            let stopped: Vec<_> = processes.iter().filter(|p| p.name == "web:1").collect();
+            assert_eq!(stopped.len(), 1);
+            assert_eq!(stopped[0].status, ProcessStatus::Stopped);
+
+            let running: Vec<_> = processes
+                .iter()
+                .filter(|p| p.status == ProcessStatus::Online)
+                .collect();
+            assert_eq!(running.len(), 2);
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cluster_mode_stop_by_logical_name() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let mut web = test_config("sleep 999");
+    web.instances = Some(3);
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), web);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+            wait: false,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Stop all instances via logical name "web" (resolved via group)
+    let stop_resp = send_raw_request(
+        &paths,
+        &Request::Stop {
+            names: Some(vec!["web".to_string()]),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&stop_resp, Response::Success { .. }),
+        "expected Success, got: {stop_resp:?}"
+    );
+
+    let list_resp = send_raw_request(&paths, &Request::List).await;
+    match &list_resp {
+        Response::ProcessList { processes } => {
+            for p in processes {
+                assert_eq!(
+                    p.status,
+                    ProcessStatus::Stopped,
+                    "expected all stopped, {} is {:?}",
+                    p.name,
+                    p.status
+                );
+            }
+        }
+        other => panic!("expected ProcessList, got: {other:?}"),
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cluster_mode_env_injection() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::with_base(dir.path().to_path_buf());
+
+    let handle = start_test_daemon(&paths).await;
+
+    let output_dir = dir.path().join("output");
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let mut web = test_config(&format!(
+        "sh -c 'echo $PM3_INSTANCE_ID $PM3_INSTANCE_COUNT > {}/instance_$PM3_INSTANCE_ID.txt; sleep 999'",
+        output_dir.display()
+    ));
+    web.instances = Some(3);
+
+    let mut configs = HashMap::new();
+    configs.insert("web".to_string(), web);
+    send_raw_request(
+        &paths,
+        &Request::Start {
+            configs,
+            names: None,
+            env: None,
+            wait: false,
+        },
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    for i in 0..3 {
+        let file = output_dir.join(format!("instance_{}.txt", i));
+        assert!(file.exists(), "output file for instance {} should exist", i);
+        let content = std::fs::read_to_string(&file).unwrap();
+        let trimmed = content.trim();
+        assert_eq!(
+            trimmed,
+            format!("{} 3", i),
+            "instance {} should have ID={} COUNT=3, got: {}",
+            i,
+            i,
+            trimmed
+        );
+    }
+
+    send_raw_request(&paths, &Request::Kill).await;
+    let _ = handle.await;
 }

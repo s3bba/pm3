@@ -169,6 +169,24 @@ command = "python app.py"
 group = "web"
 ```
 
+## `instances`
+
+**Type:** `integer` | **Default:** `1`
+
+Number of instances to spawn for this process. Each instance runs as a separate process with a unique `PM3_INSTANCE_ID` environment variable (0-indexed). Instances are named `<process>:0`, `<process>:1`, etc.
+
+```toml
+[worker]
+command = "python worker.py"
+instances = 4
+```
+
+Each instance receives these environment variables automatically:
+- `PM3_INSTANCE_ID` — the instance index (0, 1, 2, ...)
+- `PM3_INSTANCE_COUNT` — total number of instances
+
+You can target all instances with the base name (`pm3 stop worker`) or a specific instance (`pm3 stop worker:0`).
+
 ## `pre_start`
 
 **Type:** `string`
@@ -221,6 +239,7 @@ kill_signal = "SIGINT"
 kill_timeout = 10000
 depends_on = ["api"]
 group = "app"
+instances = 2
 pre_start = "npm run build"
 post_stop = "echo 'web stopped'"
 log_date_format = "%Y-%m-%d %H:%M:%S"
