@@ -6,7 +6,7 @@ import {
 } from "fumadocs-ui/layouts/docs/page";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { PageProps } from "waku/router";
-import { source } from "@/lib/source";
+import { getPageImage, source } from "@/lib/source";
 
 export default function DocPage({ slugs }: PageProps<"/docs/[...slugs]">) {
   const page = source.getPage(slugs);
@@ -24,10 +24,18 @@ export default function DocPage({ slugs }: PageProps<"/docs/[...slugs]">) {
     );
   }
 
+  const ogImage = getPageImage(page);
   const MDX = page.data.body;
   return (
     <DocsPage toc={page.data.toc} tableOfContent={{ style: "clerk" }}>
       <title>{`${page.data.title} - pm3`}</title>
+      <meta property="og:title" content={page.data.title} />
+      {page.data.description && (
+        <meta property="og:description" content={page.data.description} />
+      )}
+      <meta property="og:image" content={ogImage} />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:image" content={ogImage} />
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>

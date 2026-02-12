@@ -12,6 +12,10 @@ export default defineConfig({
       exclude: ["fumadocs-ui", "fumadocs-core"],
     },
 
+    ssr: {
+      external: ["@takumi-rs/image-response"],
+    },
+
     plugins: [tailwindcss(), mdx(MdxConfig), tsconfigPaths()],
   } satisfies UserConfig as Config["vite"],
 });
