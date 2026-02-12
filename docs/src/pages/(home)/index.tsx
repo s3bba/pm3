@@ -48,6 +48,7 @@ const installCommand =
 export default function Home() {
   return (
     <div className="flex flex-col min-h-screen">
+      <title>pm3 - A modern process manager for developers</title>
       {/* Hero */}
       <section className="flex flex-col items-center justify-center px-4 py-24 md:py-32 text-center">
         <h1 className="font-mono font-bold text-5xl md:text-7xl mb-4">pm3</h1>

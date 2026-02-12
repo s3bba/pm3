@@ -27,6 +27,7 @@ export default function DocPage({ slugs }: PageProps<"/docs/[...slugs]">) {
   const MDX = page.data.body;
   return (
     <DocsPage toc={page.data.toc} tableOfContent={{ style: "clerk" }}>
+      <title>{`${page.data.title} - pm3`}</title>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
