@@ -206,6 +206,7 @@ async fn test_spawn_process_tracks_pid() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -261,6 +262,7 @@ async fn test_spawn_with_cwd() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -300,6 +302,7 @@ async fn test_log_capture_stdout() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -341,6 +344,7 @@ async fn test_log_capture_stderr() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -383,6 +387,7 @@ async fn test_stdout_uses_pty_child_sees_tty() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -427,6 +432,7 @@ async fn test_stderr_still_piped_not_tty() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -468,6 +474,7 @@ async fn test_log_directory_created() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -511,6 +518,7 @@ command = "sleep 999"
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -562,6 +570,7 @@ command = "sleep 999"
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -614,6 +623,7 @@ command = "sleep 999"
             names: Some(vec!["web".to_string()]),
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -683,6 +693,7 @@ async fn test_list_process_info_fields() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -735,6 +746,7 @@ async fn test_list_multiple_processes_all_fields() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -792,6 +804,7 @@ async fn test_stop_process_handles_sigterm() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -867,6 +880,7 @@ async fn test_stop_process_ignores_sigterm_gets_sigkill() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -947,6 +961,7 @@ async fn test_stop_custom_kill_signal_sigint() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -996,6 +1011,7 @@ async fn test_restart_preserves_process_config() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1078,6 +1094,7 @@ command = "sleep 999"
             names: Some(vec!["nonexistent".to_string()]),
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1116,6 +1133,7 @@ async fn test_log_shows_stdout_lines() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1177,6 +1195,7 @@ async fn test_log_lines_param_limits_output() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1236,6 +1255,7 @@ async fn test_log_no_name_interleaves_all_processes() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1294,6 +1314,7 @@ async fn test_log_single_process_no_name_prefix() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1379,6 +1400,7 @@ async fn test_log_follow_streams_new_lines() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1465,6 +1487,7 @@ async fn test_flush_empties_log_file() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1534,6 +1557,7 @@ async fn test_flush_all_empties_all_logs() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1588,6 +1612,7 @@ async fn test_flush_deletes_rotated_files() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1693,6 +1718,7 @@ async fn test_log_timestamp_prefix() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1745,6 +1771,7 @@ async fn test_log_no_timestamp_without_format() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1793,6 +1820,7 @@ async fn test_log_timestamp_stderr() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1845,6 +1873,7 @@ async fn test_log_rotation_creates_rotated_file() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1882,6 +1911,7 @@ async fn test_log_rotation_only_keeps_three_files() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -1967,6 +1997,7 @@ async fn test_restart_policy_never_does_not_restart() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2009,6 +2040,7 @@ async fn test_restart_policy_always_restarts_on_clean_exit() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2050,6 +2082,7 @@ async fn test_restart_policy_on_failure_exit_zero_not_restarted() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2092,6 +2125,7 @@ async fn test_restart_policy_on_failure_exit_nonzero_restarts() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2134,6 +2168,7 @@ async fn test_restart_policy_stop_exit_codes_prevents_restart() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2183,6 +2218,7 @@ async fn test_auto_restart_recovers_after_crash() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2225,6 +2261,7 @@ async fn test_auto_restart_stops_after_max_restarts() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2270,6 +2307,7 @@ async fn test_auto_restart_list_shows_restart_count() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2320,6 +2358,7 @@ async fn test_exponential_backoff_increases_delay_between_restarts() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2389,6 +2428,7 @@ async fn test_min_uptime_stable_run_resets_restart_count() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2435,6 +2475,7 @@ async fn test_min_uptime_quick_crash_increments_restart_count() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2480,6 +2521,7 @@ async fn test_env_vars_passed_to_child() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2524,6 +2566,7 @@ async fn test_multiple_env_vars_passed_correctly() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2572,6 +2615,7 @@ async fn test_env_vars_dont_leak_between_processes() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2633,6 +2677,7 @@ async fn test_env_file_values_available_in_child() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2683,6 +2728,7 @@ async fn test_inline_env_overrides_env_file() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2732,6 +2778,7 @@ async fn test_missing_env_file_returns_error() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2777,6 +2824,7 @@ async fn test_env_file_array_loads_multiple_files() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2833,6 +2881,7 @@ async fn test_env_start_merges_env_production() {
             names: None,
             env: Some("production".to_string()),
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2882,6 +2931,7 @@ async fn test_env_production_overrides_base() {
             names: None,
             env: Some("production".to_string()),
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2924,6 +2974,7 @@ async fn test_env_unknown_name_errors() {
             names: None,
             env: Some("nonexistent".to_string()),
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -2964,6 +3015,7 @@ async fn test_info_returns_process_detail() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3054,6 +3106,7 @@ async fn test_dependency_start_order() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3108,6 +3161,7 @@ async fn test_dependency_stop_order() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3178,6 +3232,7 @@ async fn test_circular_dependency_error() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3216,6 +3271,7 @@ async fn test_missing_dependency_error() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3266,6 +3322,7 @@ async fn test_group_start_by_group_name() {
             names: Some(vec!["backend".to_string()]),
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3329,6 +3386,7 @@ async fn test_group_stop_by_group_name() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3409,6 +3467,7 @@ async fn test_process_name_takes_priority_over_group() {
             names: Some(vec!["backend".to_string()]),
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3453,6 +3512,7 @@ async fn test_group_not_found_returns_error() {
             names: Some(vec!["nonexistent-group".to_string()]),
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3499,6 +3559,7 @@ async fn test_signal_sends_to_process() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3577,6 +3638,7 @@ async fn test_signal_invalid_signal_returns_error() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3621,6 +3683,7 @@ async fn test_signal_stopped_process_returns_error() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3683,6 +3746,7 @@ async fn test_pre_start_runs_before_process() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3720,6 +3784,7 @@ async fn test_pre_start_failure_prevents_start() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3769,6 +3834,7 @@ async fn test_post_stop_runs_after_stop() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3819,6 +3885,7 @@ async fn test_restart_runs_post_stop_then_pre_start() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3878,6 +3945,7 @@ async fn test_max_memory_restart_triggers() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3938,6 +4006,7 @@ async fn test_max_memory_no_restart_when_under_limit() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -3985,6 +4054,7 @@ async fn test_watch_restarts_on_file_change() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4054,6 +4124,7 @@ async fn test_watch_debounce_rapid_changes_trigger_one_restart() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4118,6 +4189,7 @@ async fn test_watch_true_watches_cwd() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4192,6 +4264,7 @@ async fn test_watch_ignore_excludes_directories() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4266,6 +4339,7 @@ async fn test_cron_restart_triggers() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4327,6 +4401,7 @@ async fn test_cron_restart_no_trigger_with_long_interval() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4370,6 +4445,7 @@ async fn test_save_writes_dump_file() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4417,6 +4493,7 @@ async fn test_resurrect_restores_processes() {
                 names: None,
                 env: None,
                 wait: false,
+                path: None,
             },
         )
         .await;
@@ -4455,7 +4532,7 @@ async fn test_resurrect_restores_processes() {
         }
 
         // Explicit resurrect should report everything already running
-        let resp = send_raw_request(&paths, &Request::Resurrect).await;
+        let resp = send_raw_request(&paths, &Request::Resurrect { path: None }).await;
         match resp {
             Response::Success { message } => {
                 let msg = message.unwrap();
@@ -4492,6 +4569,7 @@ async fn test_resurrect_marks_dead_processes_as_restarted() {
                 names: None,
                 env: None,
                 wait: false,
+                path: None,
             },
         )
         .await;
@@ -4539,7 +4617,7 @@ async fn test_resurrect_no_dump_file_returns_error() {
     let paths = Paths::with_base(dir.path().to_path_buf());
     let handle = start_test_daemon(&paths).await;
 
-    let resp = send_raw_request(&paths, &Request::Resurrect).await;
+    let resp = send_raw_request(&paths, &Request::Resurrect { path: None }).await;
     match resp {
         Response::Error { message } => {
             assert!(message.contains("no dump file"), "got: {}", message);
@@ -4601,6 +4679,7 @@ async fn test_cluster_mode_starts_multiple_instances() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4654,6 +4733,7 @@ async fn test_cluster_mode_stop_single_instance() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4712,6 +4792,7 @@ async fn test_cluster_mode_stop_by_logical_name() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;
@@ -4776,6 +4857,7 @@ async fn test_cluster_mode_env_injection() {
             names: None,
             env: None,
             wait: false,
+            path: None,
         },
     )
     .await;

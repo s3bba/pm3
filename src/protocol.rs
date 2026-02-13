@@ -17,6 +17,8 @@ pub enum Request {
         env: Option<String>,
         #[serde(default)]
         wait: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
     },
     Stop {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,6 +33,8 @@ pub enum Request {
     Reload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         names: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
     },
     Info {
         name: String,
@@ -40,7 +44,10 @@ pub enum Request {
         signal: String,
     },
     Save,
-    Resurrect,
+    Resurrect {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
     Flush {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         names: Option<Vec<String>>,
@@ -236,6 +243,7 @@ mod tests {
             names: Some(vec!["web".to_string()]),
             env: Some("production".to_string()),
             wait: false,
+            path: Some("/usr/bin:/usr/local/bin".to_string()),
         };
         assert_eq!(roundtrip_request(&req), req);
 
@@ -244,6 +252,7 @@ mod tests {
             names: None,
             env: None,
             wait: true,
+            path: None,
         };
         assert_eq!(roundtrip_request(&req_wait), req_wait);
     }
@@ -278,8 +287,15 @@ mod tests {
     fn test_request_reload_roundtrip() {
         let req = Request::Reload {
             names: Some(vec!["worker".to_string()]),
+            path: Some("/usr/bin".to_string()),
         };
         assert_eq!(roundtrip_request(&req), req);
+
+        let req_no_path = Request::Reload {
+            names: None,
+            path: None,
+        };
+        assert_eq!(roundtrip_request(&req_no_path), req_no_path);
     }
 
     #[test]
@@ -307,8 +323,13 @@ mod tests {
 
     #[test]
     fn test_request_resurrect_roundtrip() {
-        let req = Request::Resurrect;
+        let req = Request::Resurrect {
+            path: Some("/usr/bin:/home/user/.nix-profile/bin".to_string()),
+        };
         assert_eq!(roundtrip_request(&req), req);
+
+        let req_no_path = Request::Resurrect { path: None };
+        assert_eq!(roundtrip_request(&req_no_path), req_no_path);
     }
 
     #[test]

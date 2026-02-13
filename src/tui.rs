@@ -796,6 +796,7 @@ impl App {
                 names: None,
                 env: None,
                 wait: false,
+                path: std::env::var("PATH").ok(),
             },
         ) {
             Ok(Response::Success { .. }) => {
@@ -1064,6 +1065,7 @@ impl App {
                 names: Some(vec![name.to_string()]),
                 env: None,
                 wait: false,
+                path: std::env::var("PATH").ok(),
             },
         ) {
             Ok(Response::Success { .. }) => {

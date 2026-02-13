@@ -73,6 +73,10 @@ fn should_auto_list(request: &Request) -> bool {
     )
 }
 
+fn current_path() -> Option<String> {
+    std::env::var("PATH").ok()
+}
+
 fn command_to_request(command: Command) -> color_eyre::Result<Request> {
     match command {
         Command::Start { names, env, wait } => {
@@ -84,6 +88,7 @@ fn command_to_request(command: Command) -> color_eyre::Result<Request> {
                 names: Command::optional_names(names),
                 env,
                 wait,
+                path: current_path(),
             })
         }
         Command::Stop { names } => Ok(Request::Stop {
@@ -96,6 +101,7 @@ fn command_to_request(command: Command) -> color_eyre::Result<Request> {
         Command::Kill => Ok(Request::Kill),
         Command::Reload { names } => Ok(Request::Reload {
             names: Command::optional_names(names),
+            path: current_path(),
         }),
         Command::Tui => unreachable!("tui is handled directly in main"),
         Command::Init => unreachable!("init is handled directly in main"),
@@ -104,7 +110,9 @@ fn command_to_request(command: Command) -> color_eyre::Result<Request> {
         Command::Info { name } => Ok(Request::Info { name }),
         Command::Signal { name, signal } => Ok(Request::Signal { name, signal }),
         Command::Save => Ok(Request::Save),
-        Command::Resurrect => Ok(Request::Resurrect),
+        Command::Resurrect => Ok(Request::Resurrect {
+            path: current_path(),
+        }),
         Command::Flush { names } => Ok(Request::Flush {
             names: Command::optional_names(names),
         }),
