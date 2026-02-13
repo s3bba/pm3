@@ -4,9 +4,9 @@ import { useState } from "react";
 import { CopyButton } from "@/components/copy-button";
 
 const commands = {
-  unix: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/frectonz/pm3/releases/download/0.1.5/pm3-installer.sh | sh",
+  unix: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/frectonz/pm3/releases/download/0.1.6/pm3-installer.sh | sh",
   windows:
-    'powershell -ExecutionPolicy ByPass -c "irm https://github.com/frectonz/pm3/releases/download/0.1.5/pm3-installer.ps1 | iex"',
+    'powershell -ExecutionPolicy ByPass -c "irm https://github.com/frectonz/pm3/releases/download/0.1.6/pm3-installer.ps1 | iex"',
 } as const;
 
 type Tab = keyof typeof commands;
