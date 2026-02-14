@@ -19,7 +19,6 @@ pm3 occupies a specific niche: a **developer-focused, single-binary process mana
 | **Zero-downtime reload** | Built-in (blue-green) | Requires cluster mode |
 | **Process dependencies** | Built-in (`depends_on`) | Not supported |
 | **Lifecycle hooks** | Pre-start, post-stop | Not built-in |
-| **Cron restarts** | Built-in | Custom module |
 | **Log rotation** | Built-in | Requires pm2-logrotate |
 | **File watching** | Built-in | Built-in |
 | **Memory limits** | Built-in | Built-in |
@@ -39,11 +38,11 @@ pm3 occupies a specific niche: a **developer-focused, single-binary process mana
 | **File watching** | Built-in | Not supported |
 | **Memory limits** | Built-in | Not supported |
 | **Dependencies** | `depends_on` ordering | Not supported |
-| **Daemon mode** | Background daemon | Foreground only |
-| **Restart policies** | Configurable | Basic |
+| **Daemon mode** | Background daemon | Foreground (overmind supports tmux detach) |
+| **Restart policies** | Configurable | Basic (overmind has auto-restart) |
 | **Boot persistence** | `pm3 startup` | External setup |
 
-**Choose pm3 if** you need health checks, restart policies, or daemon mode. Choose foreman/overmind for simple foreground process running.
+**Choose pm3 if** you need health checks, daemon mode, or rich per-process configuration. Choose foreman/overmind for simple Procfile-based process running.
 
 ## pm3 vs docker-compose
 
@@ -74,7 +73,7 @@ pm3 occupies a specific niche: a **developer-focused, single-binary process mana
 | **Health checks** | HTTP, HTTPS, TCP | Not built-in |
 | **File watching** | Built-in | Not built-in |
 | **Memory limits** | Built-in | Not built-in |
-| **Cross-platform** | macOS, Linux, Windows | Unix only |
+| **Cross-platform** | macOS, Linux (Windows partial) | Unix only |
 | **Cron restarts** | Built-in | Not built-in |
 
 **Choose pm3 if** you want a modern alternative with more features and no Python dependency.
@@ -87,4 +86,4 @@ pm3's differentiators:
 - **TOML config** — expressive but simple, with per-process options.
 - **Built-in TUI** — real-time monitoring without external tools.
 - **Batteries included** — health checks, file watching, memory limits, cron restarts, cluster mode, and environment-specific config all built in.
-- **Cross-platform** — macOS, Linux, and Windows from the same binary.
+- **Cross-platform** — macOS and Linux with full support; Windows with core functionality (startup service and memory monitoring not yet available on Windows).

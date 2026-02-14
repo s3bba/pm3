@@ -77,7 +77,8 @@ impl Manager {
                 names,
                 env,
                 wait,
-            } => self.start(configs, names, env, wait).await,
+                path,
+            } => self.start(configs, names, env, wait, path).await,
             Request::List => self.list().await,
             Request::Stop { names } => self.stop(names).await,
             Request::Restart { names } => self.restart(names).await,
@@ -93,9 +94,9 @@ impl Manager {
             Request::Log { .. } => Response::Error {
                 message: "unexpected dispatch for log".to_string(),
             },
-            Request::Reload { names } => self.reload(names).await,
+            Request::Reload { names, path } => self.reload(names, path).await,
             Request::Save => self.save().await,
-            Request::Resurrect => self.resurrect().await,
+            Request::Resurrect { path } => self.resurrect(path).await,
         }
     }
 
@@ -112,6 +113,7 @@ impl Manager {
         names: Option<Vec<String>>,
         env: Option<String>,
         wait: bool,
+        path: Option<String>,
     ) -> Response {
         let configs = expand_instances(configs);
 
@@ -144,6 +146,10 @@ impl Manager {
                     message: format!("unknown environment: '{}'", env_name),
                 };
             }
+        }
+
+        if let Some(ref p) = path {
+            inject_path(&mut to_start, p);
         }
 
         let subset_configs: HashMap<String, ProcessConfig> = to_start.iter().cloned().collect();
@@ -446,7 +452,7 @@ impl Manager {
         }
     }
 
-    pub async fn reload(&self, names: Option<Vec<String>>) -> Response {
+    pub async fn reload(&self, names: Option<Vec<String>>, path: Option<String>) -> Response {
         let targets = {
             let table = self.processes.read().await;
             let targets: Vec<String> = match names {
@@ -458,6 +464,17 @@ impl Manager {
             };
             targets
         };
+
+        // Force-insert PATH into stored configs so reloaded processes use the current PATH
+        if let Some(ref p) = path {
+            let mut table = self.processes.write().await;
+            for name in &targets {
+                if let Some(managed) = table.get_mut(name) {
+                    let env = managed.config.env.get_or_insert_with(HashMap::new);
+                    env.insert("PATH".to_string(), p.clone());
+                }
+            }
+        }
 
         let mut with_hc: Vec<(String, ProcessConfig, u32)> = Vec::new();
         let mut without_hc: Vec<String> = Vec::new();
@@ -655,7 +672,7 @@ impl Manager {
 
     /// Core restore logic shared by `resurrect` (CLI command) and `auto_restore` (daemon startup).
     /// Returns `Ok(restored_names)` on success, `Err(message)` on failure.
-    async fn restore_from_dump(&self) -> Result<Vec<String>, String> {
+    async fn restore_from_dump(&self, path: Option<String>) -> Result<Vec<String>, String> {
         let dump_path = self.paths.dump_file();
         if !dump_path.exists() {
             return Err("no dump file found".to_string());
@@ -665,8 +682,16 @@ impl Manager {
             .await
             .map_err(|e| format!("failed to read dump file: {}", e))?;
 
-        let entries: Vec<DumpEntry> =
+        let mut entries: Vec<DumpEntry> =
             serde_json::from_str(&data).map_err(|e| format!("failed to parse dump file: {}", e))?;
+
+        // Force-insert PATH into restored configs so they use the current CLI PATH
+        if let Some(ref p) = path {
+            for entry in &mut entries {
+                let env = entry.config.env.get_or_insert_with(HashMap::new);
+                env.insert("PATH".to_string(), p.clone());
+            }
+        }
 
         let already_running: Vec<String> = {
             let table = self.processes.read().await;
@@ -865,8 +890,8 @@ impl Manager {
         Ok(restored)
     }
 
-    pub async fn resurrect(&self) -> Response {
-        match self.restore_from_dump().await {
+    pub async fn resurrect(&self, path: Option<String>) -> Response {
+        match self.restore_from_dump(path).await {
             Ok(restored) if restored.is_empty() => Response::Success {
                 message: Some("all processes already running".to_string()),
             },
@@ -880,7 +905,7 @@ impl Manager {
     /// Auto-restore processes from dump file on daemon startup.
     /// Silently skips if no dump file exists.
     pub async fn auto_restore(&self) {
-        match self.restore_from_dump().await {
+        match self.restore_from_dump(None).await {
             Ok(restored) if restored.is_empty() => {}
             Ok(restored) => {
                 eprintln!(
@@ -1149,6 +1174,16 @@ impl SpawnedProcess {
             shutdown_rx,
         );
         process::spawn_aux_monitors(self.name, self.config, processes, paths, self.shutdown_tx);
+    }
+}
+
+/// Inject a `PATH` value into each config's env map.
+/// Uses `or_insert` so a user-explicit PATH in pm3.toml takes precedence.
+fn inject_path(configs: &mut [(String, ProcessConfig)], path: &str) {
+    for (_, config) in configs.iter_mut() {
+        let env = config.env.get_or_insert_with(HashMap::new);
+        env.entry("PATH".to_string())
+            .or_insert_with(|| path.to_string());
     }
 }
 
