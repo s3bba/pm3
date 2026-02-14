@@ -51,14 +51,14 @@ Equivalent to stop + start. Restart counters are **not** reset.
 
 ## `pm3 reload`
 
-Zero-downtime reload (requires a [health check](/docs/configuration/health-checks)).
+Zero-downtime reload (requires a startup probe: `readiness_check` and/or `health_check`).
 
 ```bash
 pm3 reload         # Reload all
 pm3 reload web     # Reload specific processes
 ```
 
-Starts a new instance, waits for its health check to pass, then stops the old instance. Without a health check, behaves the same as `restart`.
+Starts a new instance, waits for its configured startup probes to pass, then stops the old instance. Without startup probes, behaves the same as `restart`.
 
 ---
 

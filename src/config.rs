@@ -40,6 +40,8 @@ pub struct ProcessConfig {
     pub cwd: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub env_file: Option<EnvFile>,
+    pub readiness_check: Option<String>,
+    pub readiness_timeout: Option<u64>,
     pub health_check: Option<String>,
     pub kill_timeout: Option<u64>,
     pub kill_signal: Option<String>,
@@ -106,6 +108,8 @@ struct RawProcessConfig {
     cwd: Option<String>,
     env: Option<HashMap<String, String>>,
     env_file: Option<EnvFile>,
+    readiness_check: Option<String>,
+    readiness_timeout: Option<u64>,
     health_check: Option<String>,
     kill_timeout: Option<u64>,
     kill_signal: Option<String>,
@@ -166,6 +170,17 @@ pub fn parse_config(content: &str) -> Result<HashMap<String, ProcessConfig>, Con
             .try_into()
             .map_err(|e: toml::de::Error| ConfigError::TomlParse(e.to_string()))?;
 
+        if raw.readiness_timeout.is_some() && raw.readiness_check.is_none() {
+            return Err(ConfigError::TomlParse(format!(
+                "readiness_timeout requires readiness_check in process '{name}'"
+            )));
+        }
+        if matches!(raw.readiness_timeout, Some(0)) {
+            return Err(ConfigError::TomlParse(format!(
+                "readiness_timeout must be greater than 0 in process '{name}'"
+            )));
+        }
+
         let mut environments: HashMap<String, HashMap<String, String>> = HashMap::new();
 
         for (key, val) in &raw.extra {
@@ -190,6 +205,8 @@ pub fn parse_config(content: &str) -> Result<HashMap<String, ProcessConfig>, Con
                 cwd: raw.cwd,
                 env: raw.env,
                 env_file: raw.env_file,
+                readiness_check: raw.readiness_check,
+                readiness_timeout: raw.readiness_timeout,
                 health_check: raw.health_check,
                 kill_timeout: raw.kill_timeout,
                 kill_signal: raw.kill_signal,
@@ -229,6 +246,8 @@ command = "node server.js"
 cwd = "/app"
 env = { NODE_ENV = "production", PORT = "3000" }
 env_file = ".env"
+readiness_check = "tcp://localhost:3000"
+readiness_timeout = 180
 health_check = "http://localhost:3000/health"
 kill_timeout = 5000
 kill_signal = "SIGTERM"
@@ -260,6 +279,8 @@ DATABASE_URL = "postgres://prod/db"
             "production"
         );
         assert_eq!(web.env_file, Some(EnvFile::Single(".env".to_string())));
+        assert_eq!(web.readiness_check.as_deref(), Some("tcp://localhost:3000"));
+        assert_eq!(web.readiness_timeout, Some(180));
         assert_eq!(
             web.health_check.as_deref(),
             Some("http://localhost:3000/health")
@@ -340,6 +361,8 @@ command = "cargo run"
         assert!(api.cwd.is_none());
         assert!(api.env.is_none());
         assert!(api.env_file.is_none());
+        assert!(api.readiness_check.is_none());
+        assert!(api.readiness_timeout.is_none());
         assert!(api.health_check.is_none());
         assert!(api.kill_timeout.is_none());
         assert!(api.kill_signal.is_none());
@@ -477,12 +500,37 @@ DATABASE_URL = "postgres://staging/db"
         );
     }
 
+    #[test]
+    fn test_readiness_timeout_requires_readiness_check() {
+        let input = r#"
+[web]
+command = "node server.js"
+readiness_timeout = 120
+"#;
+        let result = parse_config(input);
+        assert!(matches!(result, Err(ConfigError::TomlParse(_))));
+    }
+
+    #[test]
+    fn test_readiness_timeout_must_be_positive() {
+        let input = r#"
+[web]
+command = "node server.js"
+readiness_check = "tcp://localhost:3000"
+readiness_timeout = 0
+"#;
+        let result = parse_config(input);
+        assert!(matches!(result, Err(ConfigError::TomlParse(_))));
+    }
+
     fn base_config() -> ProcessConfig {
         ProcessConfig {
             command: "echo hi".to_string(),
             cwd: None,
             env: None,
             env_file: None,
+            readiness_check: None,
+            readiness_timeout: None,
             health_check: None,
             kill_timeout: None,
             kill_signal: None,

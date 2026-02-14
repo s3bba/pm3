@@ -241,6 +241,12 @@ fn print_response(response: &Response) {
             if let Some(stderr_log) = &info.stderr_log {
                 println!("  {} {stderr_log}", "stderr_log:".dimmed());
             }
+            if let Some(readiness_check) = &info.readiness_check {
+                println!("  {} {readiness_check}", "readiness_check:".dimmed());
+            }
+            if let Some(readiness_timeout) = info.readiness_timeout {
+                println!("  {} {}s", "readiness_timeout:".dimmed(), readiness_timeout);
+            }
             if let Some(health_check) = &info.health_check {
                 println!("  {} {health_check}", "health_check:".dimmed());
             }

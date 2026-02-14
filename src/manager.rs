@@ -476,17 +476,19 @@ impl Manager {
             }
         }
 
-        let mut with_hc: Vec<(String, ProcessConfig, u32)> = Vec::new();
-        let mut without_hc: Vec<String> = Vec::new();
+        let mut with_checks: Vec<(String, ProcessConfig, u32)> = Vec::new();
+        let mut without_checks: Vec<String> = Vec::new();
 
         {
             let table = self.processes.read().await;
             for name in &targets {
                 if let Some(managed) = table.get(name) {
-                    if managed.config.health_check.is_some() {
-                        with_hc.push((name.clone(), managed.config.clone(), managed.restarts));
+                    if managed.config.readiness_check.is_some()
+                        || managed.config.health_check.is_some()
+                    {
+                        with_checks.push((name.clone(), managed.config.clone(), managed.restarts));
                     } else {
-                        without_hc.push(name.clone());
+                        without_checks.push(name.clone());
                     }
                 }
             }
@@ -495,9 +497,8 @@ impl Manager {
         let mut reloaded = Vec::new();
         let mut failed = Vec::new();
 
-        for (name, config, old_restarts) in with_hc {
+        for (name, config, old_restarts) in with_checks {
             let temp_name = format!("__reload_{}", name);
-            let health_check = config.health_check.clone();
             let max_memory = config.max_memory.clone();
             let cron_restart = config.cron_restart.clone();
 
@@ -511,7 +512,7 @@ impl Manager {
                         .expect("monitor shutdown sender missing")
                         .clone();
                     let shutdown_rx = shutdown_tx.subscribe();
-                    let health_shutdown_rx = health_check.as_ref().map(|_| shutdown_tx.subscribe());
+                    let startup_shutdown_rx = shutdown_tx.subscribe();
 
                     {
                         let mut table = self.processes.write().await;
@@ -527,14 +528,14 @@ impl Manager {
                         shutdown_rx,
                     );
 
-                    if let (Some(hc), Some(hc_rx)) = (health_check, health_shutdown_rx) {
-                        health::spawn_health_checker(
-                            temp_name.clone(),
-                            hc,
-                            Arc::clone(&self.processes),
-                            hc_rx,
-                        );
-                    }
+                    health::spawn_startup_checker(
+                        temp_name.clone(),
+                        config.readiness_check.clone(),
+                        config.readiness_timeout,
+                        config.health_check.clone(),
+                        Arc::clone(&self.processes),
+                        startup_shutdown_rx,
+                    );
 
                     match wait_for_online(std::slice::from_ref(&temp_name), &self.processes).await {
                         Ok(()) => {
@@ -609,10 +610,10 @@ impl Manager {
             }
         }
 
-        if !without_hc.is_empty() {
-            match self.restart(Some(without_hc.clone())).await {
+        if !without_checks.is_empty() {
+            match self.restart(Some(without_checks.clone())).await {
                 Response::Success { .. } => {
-                    reloaded.extend(without_hc);
+                    reloaded.extend(without_checks);
                 }
                 Response::Error { message } => {
                     return Response::Error { message };
@@ -748,7 +749,9 @@ impl Manager {
                         let (log_tx, _) = tokio::sync::broadcast::channel(1024);
                         let (monitor_tx, _) = watch::channel(false);
 
-                        let status = if entry.config.health_check.is_some() {
+                        let status = if entry.config.readiness_check.is_some()
+                            || entry.config.health_check.is_some()
+                        {
                             ProcessStatus::Starting
                         } else {
                             ProcessStatus::Online
@@ -817,17 +820,20 @@ impl Manager {
                         continue;
                     }
 
-                    if let Some(ref hc) = entry.config.health_check {
-                        let hc_rx = managed
+                    if entry.config.readiness_check.is_some() || entry.config.health_check.is_some()
+                    {
+                        let startup_rx = managed
                             .monitor_shutdown
                             .as_ref()
                             .expect("monitor shutdown sender missing")
                             .subscribe();
-                        health::spawn_health_checker(
+                        health::spawn_startup_checker(
                             name.clone(),
-                            hc.clone(),
+                            entry.config.readiness_check.clone(),
+                            entry.config.readiness_timeout,
+                            entry.config.health_check.clone(),
                             Arc::clone(&self.processes),
-                            hc_rx,
+                            startup_rx,
                         );
                     }
                     if let Some(ref mm) = entry.config.max_memory {
@@ -1254,12 +1260,47 @@ fn resolve_table_names(requested: &[String], table: &ProcessTable) -> Result<Vec
 
 const DEP_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 const DEP_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const STARTUP_WAIT_BUFFER_SECS: u64 = 5;
 
 async fn wait_for_online(
     names: &[String],
     processes: &Arc<RwLock<ProcessTable>>,
 ) -> Result<(), String> {
-    let deadline = tokio::time::Instant::now() + DEP_WAIT_TIMEOUT;
+    let deadline = {
+        let table = processes.read().await;
+        let mut timeout = DEP_WAIT_TIMEOUT;
+
+        for name in names {
+            let Some(managed) = table.get(name) else {
+                continue;
+            };
+
+            let mut startup_timeout_secs = 0_u64;
+            if managed.config.readiness_check.is_some() {
+                startup_timeout_secs = startup_timeout_secs.saturating_add(
+                    managed
+                        .config
+                        .readiness_timeout
+                        .unwrap_or(health::HEALTH_CHECK_TIMEOUT_SECS),
+                );
+            }
+            if managed.config.health_check.is_some() {
+                startup_timeout_secs =
+                    startup_timeout_secs.saturating_add(health::HEALTH_CHECK_TIMEOUT_SECS);
+            }
+
+            if startup_timeout_secs > 0 {
+                let with_buffer = Duration::from_secs(
+                    startup_timeout_secs.saturating_add(STARTUP_WAIT_BUFFER_SECS),
+                );
+                if with_buffer > timeout {
+                    timeout = with_buffer;
+                }
+            }
+        }
+
+        tokio::time::Instant::now() + timeout
+    };
 
     loop {
         if tokio::time::Instant::now() >= deadline {
@@ -1395,6 +1436,8 @@ mod tests {
             cwd: None,
             env: None,
             env_file: None,
+            readiness_check: None,
+            readiness_timeout: None,
             health_check: None,
             kill_timeout: None,
             kill_signal: None,

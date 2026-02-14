@@ -153,6 +153,10 @@ pub struct ProcessDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stderr_log: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness_check: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness_timeout: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_check: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depends_on: Option<Vec<String>>,
@@ -218,6 +222,8 @@ mod tests {
                 cwd: Some("/app".to_string()),
                 env: None,
                 env_file: None,
+                readiness_check: None,
+                readiness_timeout: None,
                 health_check: None,
                 kill_timeout: None,
                 kill_signal: None,
@@ -414,6 +420,8 @@ mod tests {
                 exit_code: None,
                 stdout_log: Some("/home/user/.local/share/pm3/logs/web-out.log".to_string()),
                 stderr_log: Some("/home/user/.local/share/pm3/logs/web-err.log".to_string()),
+                readiness_check: Some("tcp://localhost:3000".to_string()),
+                readiness_timeout: Some(180),
                 health_check: Some("http://localhost:3000/health".to_string()),
                 depends_on: Some(vec!["db".to_string()]),
             }),

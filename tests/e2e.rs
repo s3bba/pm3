@@ -1196,6 +1196,76 @@ health_check = "tcp://127.0.0.1:18935"
     kill_daemon(&data_dir, work_dir);
 }
 
+#[test]
+fn test_e2e_reload_with_readiness_check() {
+    let dir = TempDir::new().unwrap();
+    let work_dir = dir.path();
+    let data_dir = dir.path().join("data");
+
+    std::fs::write(
+        work_dir.join("server.js"),
+        r#"
+const http = require('http');
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('ok');
+});
+server.listen({port: 18936, host: '127.0.0.1', exclusive: false}, () => {
+  console.log('listening');
+});
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    setTimeout(() => {
+      server.listen({port: 18936, host: '127.0.0.1', exclusive: false}, () => {
+        console.log('listening on retry');
+      });
+    }, 1000);
+  }
+});
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        work_dir.join("pm3.toml"),
+        r#"
+[server]
+command = "node server.js"
+readiness_check = "tcp://127.0.0.1:18936"
+"#,
+    )
+    .unwrap();
+
+    pm3(&data_dir, work_dir).arg("start").assert().success();
+
+    wait_until_online(&data_dir, work_dir, "server", 15);
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let pid_before = find_process_pid(&processes, "server");
+
+    pm3(&data_dir, work_dir)
+        .args(["reload", "server"])
+        .timeout(Duration::from_secs(60))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reloaded:"));
+
+    wait_until_online(&data_dir, work_dir, "server", 15);
+
+    let processes = get_process_list(&data_dir, work_dir);
+    let pid_after = find_process_pid(&processes, "server");
+    assert_ne!(pid_before, pid_after, "PID should change after reload");
+
+    let server = processes.iter().find(|p| p.name == "server").unwrap();
+    assert_eq!(
+        server.status,
+        ProcessStatus::Online,
+        "server should be online after reload"
+    );
+
+    kill_daemon(&data_dir, work_dir);
+}
+
 // ── Step 25: Info command ───────────────────────────────────────────
 
 #[test]

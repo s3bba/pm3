@@ -9,6 +9,7 @@ struct InitProcess {
     cwd: Option<String>,
     env: Vec<(String, String)>,
     restart: Option<String>,
+    readiness_check: Option<String>,
     health_check: Option<String>,
     group: Option<String>,
     depends_on: Vec<String>,
@@ -46,6 +47,13 @@ fn generate_toml(processes: &[InitProcess]) -> String {
 
         if let Some(restart) = &p.restart {
             out.push_str(&format!("restart = {}\n", escape_toml_string(restart)));
+        }
+
+        if let Some(readiness_check) = &p.readiness_check {
+            out.push_str(&format!(
+                "readiness_check = {}\n",
+                escape_toml_string(readiness_check)
+            ));
         }
 
         if let Some(health_check) = &p.health_check {
@@ -258,6 +266,7 @@ fn run_interactive(dir: &Path) -> color_eyre::Result<()> {
             cwd,
             env,
             restart,
+            readiness_check: None,
             health_check,
             group,
             depends_on,
@@ -425,6 +434,7 @@ fn run_piped(dir: &Path, reader: &mut impl BufRead) -> color_eyre::Result<()> {
             cwd,
             env,
             restart,
+            readiness_check: None,
             health_check,
             group,
             depends_on,
@@ -454,6 +464,7 @@ mod tests {
             cwd: None,
             env: Vec::new(),
             restart: None,
+            readiness_check: None,
             health_check: None,
             group: None,
             depends_on: Vec::new(),
@@ -464,6 +475,7 @@ mod tests {
         assert!(!toml.contains("cwd"));
         assert!(!toml.contains("env"));
         assert!(!toml.contains("restart"));
+        assert!(!toml.contains("readiness_check"));
         assert!(!toml.contains("health_check"));
         assert!(!toml.contains("group"));
         assert!(!toml.contains("depends_on"));
@@ -478,6 +490,7 @@ mod tests {
                 cwd: None,
                 env: Vec::new(),
                 restart: None,
+                readiness_check: None,
                 health_check: None,
                 group: None,
                 depends_on: Vec::new(),
@@ -488,6 +501,7 @@ mod tests {
                 cwd: None,
                 env: Vec::new(),
                 restart: None,
+                readiness_check: None,
                 health_check: None,
                 group: None,
                 depends_on: Vec::new(),
@@ -507,6 +521,7 @@ mod tests {
             cwd: Some("./frontend".to_string()),
             env: vec![("PORT".to_string(), "3000".to_string())],
             restart: Some("on_failure".to_string()),
+            readiness_check: Some("tcp://localhost:3000".to_string()),
             health_check: Some("http://localhost:3000/health".to_string()),
             group: Some("backend".to_string()),
             depends_on: vec!["db".to_string()],
@@ -517,6 +532,7 @@ mod tests {
         assert!(toml.contains("cwd = \"./frontend\""));
         assert!(toml.contains("env = { PORT = \"3000\" }"));
         assert!(toml.contains("restart = \"on_failure\""));
+        assert!(toml.contains("readiness_check = \"tcp://localhost:3000\""));
         assert!(toml.contains("health_check = \"http://localhost:3000/health\""));
         assert!(toml.contains("group = \"backend\""));
         assert!(toml.contains("depends_on = [\"db\"]"));
@@ -531,6 +547,7 @@ mod tests {
                 cwd: Some("./frontend".to_string()),
                 env: vec![("PORT".to_string(), "3000".to_string())],
                 restart: Some("on_failure".to_string()),
+                readiness_check: Some("tcp://localhost:3000".to_string()),
                 health_check: Some("http://localhost:3000/health".to_string()),
                 group: Some("backend".to_string()),
                 depends_on: vec!["db".to_string()],
@@ -541,6 +558,7 @@ mod tests {
                 cwd: None,
                 env: Vec::new(),
                 restart: Some("always".to_string()),
+                readiness_check: None,
                 health_check: None,
                 group: None,
                 depends_on: Vec::new(),

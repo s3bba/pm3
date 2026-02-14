@@ -1,20 +1,38 @@
 ---
-title: Health Checks
-description: Configure HTTP, HTTPS, and TCP health checks to monitor process readiness.
+title: Readiness and Health Checks
+description: Configure startup readiness and health probes for your processes.
 icon: HeartPulse
 ---
 
-Health checks let pm3 verify that a process is actually ready to serve traffic, not just running. A process with a health check starts in the `Starting` state and transitions to `Online` only after the check passes.
+Use `readiness_check` to keep a process in `Starting` until it is ready. Optionally add `health_check` to run a second startup probe after readiness passes.
 
 ## Configuration
 
 ```toml
 [web]
 command = "node server.js"
+readiness_check = "tcp://localhost:3000"
+readiness_timeout = 180
 health_check = "http://localhost:3000/health"
 ```
 
-**Type:** `string` — a URL in one of the supported formats below.
+Both fields are optional and use the same URL formats.
+
+## `readiness_timeout`
+
+Optional timeout in seconds for `readiness_check`.
+
+```toml
+[web]
+command = "cargo run"
+readiness_check = "tcp://127.0.0.1:3000"
+readiness_timeout = 180
+```
+
+- **Type:** `integer`
+- **Default:** `30`
+- Applies only to `readiness_check`.
+- Must be greater than `0`.
 
 ## Supported Protocols
 
@@ -25,7 +43,7 @@ health_check = "http://localhost:3000/health"
 health_check = "https://localhost:8443/health"
 ```
 
-pm3 sends a GET request to the URL. Any `2xx` status code is considered healthy.
+pm3 sends a GET request to the URL. Any `2xx` status code is considered passing.
 
 ### TCP
 
@@ -34,7 +52,7 @@ health_check = "tcp://localhost:6379"
 health_check = "tcp://127.0.0.1:5432"
 ```
 
-pm3 attempts a TCP connection to the host and port. A successful connection is considered healthy.
+pm3 attempts a TCP connection to the host and port. A successful connection is considered passing.
 
 **IPv6** is supported with bracket notation:
 
@@ -42,34 +60,45 @@ pm3 attempts a TCP connection to the host and port. A successful connection is c
 health_check = "tcp://[::1]:5432"
 ```
 
+## Probe Order
+
+When both probes are configured:
+
+1. `readiness_check` runs first.
+2. After readiness passes, `health_check` runs.
+3. Process moves to `Online` only after all configured probes pass.
+
+If only one of the two is set, pm3 runs that one probe.
+
 ## Timing
 
 | Parameter | Value |
 |---|---|
 | Check interval | 1 second |
 | Per-attempt timeout | 2 seconds |
-| Total timeout | 30 seconds |
+| Readiness timeout | `readiness_timeout` or 30 seconds |
+| Health timeout | 30 seconds |
 
-If the health check doesn't pass within 30 seconds, the process transitions to `Unhealthy`.
+If any configured probe does not pass within 30 seconds, the process transitions to `Unhealthy`.
 
 ## State Transitions
 
 ```
-Starting → (health check passes) → Online
-Starting → (30s timeout)         → Unhealthy
+Starting → (all configured probes pass) → Online
+Starting → (any probe times out)        → Unhealthy
 ```
 
-Without a health check, processes go directly to `Online` once spawned.
+Without `readiness_check` and `health_check`, processes go directly to `Online` once spawned.
 
 ## Zero-Downtime Reload
 
-Health checks enable the `pm3 reload` command. During a reload:
+Startup probes (`readiness_check` and/or `health_check`) enable zero-downtime `pm3 reload`. During a reload:
 
 1. A new instance of the process is started.
-2. pm3 waits for the new instance's health check to pass.
+2. pm3 waits for the new instance's configured startup probes to pass.
 3. The old instance is stopped.
 
-This ensures there's no downtime between the old and new process. Without a health check, `reload` behaves the same as `restart`.
+This ensures there's no downtime between the old and new process. Without startup probes, `reload` behaves the same as `restart`.
 
 ```bash
 pm3 reload web

@@ -267,6 +267,8 @@ mod tests {
             cwd: None,
             env: None,
             env_file: None,
+            readiness_check: None,
+            readiness_timeout: None,
             health_check: None,
             kill_timeout: None,
             kill_signal: None,

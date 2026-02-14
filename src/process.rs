@@ -140,6 +140,8 @@ impl ManagedProcess {
             exit_code: None,
             stdout_log: Some(paths.stdout_log(&self.name).to_string_lossy().into_owned()),
             stderr_log: Some(paths.stderr_log(&self.name).to_string_lossy().into_owned()),
+            readiness_check: self.config.readiness_check.clone(),
+            readiness_timeout: self.config.readiness_timeout,
             health_check: self.config.health_check.clone(),
             depends_on: self.config.depends_on.clone(),
         }
@@ -204,10 +206,12 @@ pub fn spawn_aux_monitors(
     paths: Paths,
     shutdown_tx: watch::Sender<bool>,
 ) {
-    if let Some(hc) = config.health_check.clone() {
-        health::spawn_health_checker(
+    if config.readiness_check.is_some() || config.health_check.is_some() {
+        health::spawn_startup_checker(
             name.clone(),
-            hc,
+            config.readiness_check.clone(),
+            config.readiness_timeout,
+            config.health_check.clone(),
             Arc::clone(&processes),
             shutdown_tx.subscribe(),
         );
@@ -349,7 +353,7 @@ pub async fn spawn_process(
         }
         Ok(None) => {
             // Still running
-            if config.health_check.is_some() {
+            if config.readiness_check.is_some() || config.health_check.is_some() {
                 ProcessStatus::Starting
             } else {
                 ProcessStatus::Online
@@ -357,7 +361,7 @@ pub async fn spawn_process(
         }
         Err(_) => {
             // Cannot query status, assume running
-            if config.health_check.is_some() {
+            if config.readiness_check.is_some() || config.health_check.is_some() {
                 ProcessStatus::Starting
             } else {
                 ProcessStatus::Online
@@ -729,6 +733,8 @@ mod tests {
             cwd: None,
             env: None,
             env_file: None,
+            readiness_check: None,
+            readiness_timeout: None,
             health_check: None,
             kill_timeout: None,
             kill_signal: None,

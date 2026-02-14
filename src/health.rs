@@ -6,7 +6,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{RwLock, watch};
 
 pub const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(1);
-pub const HEALTH_CHECK_TIMEOUT_SECS: u32 = 30;
+pub const HEALTH_CHECK_TIMEOUT_SECS: u64 = 30;
 pub const HEALTH_CHECK_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,26 +64,120 @@ async fn check_tcp(host: &str, port: u16) -> bool {
         .unwrap_or(false)
 }
 
-pub fn spawn_health_checker(
+async fn check_target(client: &reqwest::Client, target: &HealthCheckTarget) -> bool {
+    match target {
+        HealthCheckTarget::Http(url) => check_http(client, url).await,
+        HealthCheckTarget::Tcp(host, port) => check_tcp(host, *port).await,
+    }
+}
+
+async fn set_unhealthy_if_starting(name: &str, processes: &Arc<RwLock<ProcessTable>>) {
+    let mut table = processes.write().await;
+    if let Some(managed) = table.get_mut(name)
+        && managed.status == ProcessStatus::Starting
+    {
+        managed.status = ProcessStatus::Unhealthy;
+    }
+}
+
+async fn set_online_if_starting(name: &str, processes: &Arc<RwLock<ProcessTable>>) {
+    let mut table = processes.write().await;
+    if let Some(managed) = table.get_mut(name)
+        && managed.status == ProcessStatus::Starting
+    {
+        managed.status = ProcessStatus::Online;
+    }
+}
+
+enum WaitOutcome {
+    Passed,
+    TimedOut,
+    Aborted,
+}
+
+async fn wait_for_check_pass(
+    name: &str,
+    target: &HealthCheckTarget,
+    timeout_secs: u64,
+    processes: &Arc<RwLock<ProcessTable>>,
+    client: &reqwest::Client,
+    shutdown_rx: &mut watch::Receiver<bool>,
+) -> WaitOutcome {
+    for _ in 0..timeout_secs {
+        // Check shutdown signal
+        if *shutdown_rx.borrow() {
+            return WaitOutcome::Aborted;
+        }
+
+        // Check if process is still in Starting state
+        {
+            let table = processes.read().await;
+            match table.get(name) {
+                Some(managed) if managed.status == ProcessStatus::Starting => {}
+                _ => return WaitOutcome::Aborted,
+            }
+        }
+
+        if check_target(client, target).await {
+            return WaitOutcome::Passed;
+        }
+
+        // Wait before next attempt, also listening for shutdown
+        tokio::select! {
+            _ = tokio::time::sleep(HEALTH_CHECK_INTERVAL) => {}
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    return WaitOutcome::Aborted;
+                }
+            }
+        }
+    }
+
+    WaitOutcome::TimedOut
+}
+
+pub fn spawn_startup_checker(
     name: String,
-    health_check: String,
+    readiness_check: Option<String>,
+    readiness_timeout_secs: Option<u64>,
+    health_check: Option<String>,
     processes: Arc<RwLock<ProcessTable>>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
-        let target = match parse_health_check(&health_check) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("invalid health check for '{name}': {e}");
-                let mut table = processes.write().await;
-                if let Some(managed) = table.get_mut(&name)
-                    && managed.status == ProcessStatus::Starting
-                {
-                    managed.status = ProcessStatus::Unhealthy;
+        let mut parsed_checks: Vec<(&str, HealthCheckTarget, u64)> = Vec::new();
+
+        if let Some(readiness_check) = readiness_check {
+            let target = match parse_health_check(&readiness_check) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("invalid readiness check for '{name}': {e}");
+                    set_unhealthy_if_starting(&name, &processes).await;
+                    return;
                 }
-                return;
-            }
-        };
+            };
+            parsed_checks.push((
+                "readiness",
+                target,
+                readiness_timeout_secs.unwrap_or(HEALTH_CHECK_TIMEOUT_SECS),
+            ));
+        }
+
+        if let Some(health_check) = health_check {
+            let target = match parse_health_check(&health_check) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("invalid health check for '{name}': {e}");
+                    set_unhealthy_if_starting(&name, &processes).await;
+                    return;
+                }
+            };
+            parsed_checks.push(("health", target, HEALTH_CHECK_TIMEOUT_SECS));
+        }
+
+        if parsed_checks.is_empty() {
+            return;
+        }
 
         let client = match reqwest::Client::builder()
             .timeout(HEALTH_CHECK_ATTEMPT_TIMEOUT)
@@ -92,66 +186,43 @@ pub fn spawn_health_checker(
             Ok(c) => c,
             Err(e) => {
                 eprintln!("failed to build HTTP client for '{name}': {e}");
-                let mut table = processes.write().await;
-                if let Some(managed) = table.get_mut(&name)
-                    && managed.status == ProcessStatus::Starting
-                {
-                    managed.status = ProcessStatus::Unhealthy;
-                }
+                set_unhealthy_if_starting(&name, &processes).await;
                 return;
             }
         };
 
-        for _ in 0..HEALTH_CHECK_TIMEOUT_SECS {
-            // Check shutdown signal
-            if *shutdown_rx.borrow() {
-                return;
-            }
-
-            // Check if process is still in Starting state
+        for (check_kind, target, timeout_secs) in &parsed_checks {
+            match wait_for_check_pass(
+                &name,
+                target,
+                *timeout_secs,
+                &processes,
+                &client,
+                &mut shutdown_rx,
+            )
+            .await
             {
-                let table = processes.read().await;
-                match table.get(&name) {
-                    Some(managed) if managed.status == ProcessStatus::Starting => {}
-                    _ => return, // Process exited or status changed
+                WaitOutcome::Passed => {}
+                WaitOutcome::TimedOut => {
+                    eprintln!("{check_kind} check timed out for '{name}' after {timeout_secs}s");
+                    set_unhealthy_if_starting(&name, &processes).await;
+                    return;
                 }
-            }
-
-            // Probe
-            let healthy = match &target {
-                HealthCheckTarget::Http(url) => check_http(&client, url).await,
-                HealthCheckTarget::Tcp(host, port) => check_tcp(host, *port).await,
-            };
-
-            if healthy {
-                let mut table = processes.write().await;
-                if let Some(managed) = table.get_mut(&name)
-                    && managed.status == ProcessStatus::Starting
-                {
-                    managed.status = ProcessStatus::Online;
-                }
-                return;
-            }
-
-            // Wait before next attempt, also listening for shutdown
-            tokio::select! {
-                _ = tokio::time::sleep(HEALTH_CHECK_INTERVAL) => {}
-                _ = shutdown_rx.changed() => {
-                    if *shutdown_rx.borrow() {
-                        return;
-                    }
-                }
+                WaitOutcome::Aborted => return,
             }
         }
 
-        // Timeout — set Unhealthy
-        let mut table = processes.write().await;
-        if let Some(managed) = table.get_mut(&name)
-            && managed.status == ProcessStatus::Starting
-        {
-            managed.status = ProcessStatus::Unhealthy;
-        }
+        set_online_if_starting(&name, &processes).await;
     });
+}
+
+pub fn spawn_health_checker(
+    name: String,
+    health_check: String,
+    processes: Arc<RwLock<ProcessTable>>,
+    shutdown_rx: watch::Receiver<bool>,
+) {
+    spawn_startup_checker(name, None, None, Some(health_check), processes, shutdown_rx);
 }
 
 #[cfg(test)]

@@ -10,9 +10,9 @@ Understanding the process lifecycle helps you configure restart policies, health
 
 | State | Description |
 |---|---|
-| **Starting** | Process has been spawned. If a health check is configured, pm3 is waiting for it to pass. |
+| **Starting** | Process has been spawned. If `readiness_check` and/or `health_check` is configured, pm3 waits for startup probes to pass. |
 | **Online** | Process is running and healthy. |
-| **Unhealthy** | Health check failed (timed out after 30 seconds). |
+| **Unhealthy** | A startup probe failed or timed out (`readiness_timeout` for readiness, 30s for health). |
 | **Stopped** | Process was stopped by user command or exited cleanly. |
 | **Errored** | Process failed to start or crashed unexpectedly. |
 
@@ -21,9 +21,9 @@ Understanding the process lifecycle helps you configure restart policies, health
 | From | Event | To |
 |---|---|---|
 | *(spawn)* | Process starts | **Starting** |
-| **Starting** | Health check passes | **Online** |
-| **Starting** | No health check configured | **Online** |
-| **Starting** | Health check times out (30s) | **Unhealthy** |
+| **Starting** | All configured startup probes pass | **Online** |
+| **Starting** | No startup probes configured | **Online** |
+| **Starting** | Startup probe times out | **Unhealthy** |
 | **Online** | Exit / signal / user stop | **Stopped** |
 | **Stopped** | Restart (policy or manual) | **Starting** |
 | *(spawn)* | Spawn failure | **Errored** |
